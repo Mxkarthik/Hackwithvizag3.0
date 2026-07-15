@@ -32,3 +32,21 @@ renderer.setAnimationLoop(() => {
     renderer.render(scene, camera);
 
 });
+
+const geometry = new THREE.PlaneGeometry(
+    4, // Width
+    1 // Height 
+);
+
+const material = new THREE.MeshBasicMaterial({
+    color: 0x2B2B2B
+});
+
+
+const panel = new THREE.Mesh(
+    geometry,
+    material
+);
+
+scene.add(panel);
+
