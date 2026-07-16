@@ -23,6 +23,7 @@ uniform float uEmissionStrength;  // HDR multiplier for light layers
 uniform float uEnableEmission;    // Debug toggle: 1.0 = HDR, 0.0 = LDR clamp
 uniform float uMetalStrength;
 uniform float uNoiseStrength;
+uniform float uSecondaryReflection;
 
 // =============================================================================
 // HELPER: hash2
@@ -114,7 +115,7 @@ void main() {
     // Subtle V-axis gradient adds three-dimensional depth.
     // Increased from 0.006 → 0.011 — strip still nearly disappears unlit.
     float verticalGradientFactor = vUv.y;
-    vec3 verticalDepth = mix(vec3(0.0), vec3(0.008), verticalGradientFactor);  // 0.016→0.008: depth cue at correct proportion to lower base
+    vec3 verticalDepth = vec3(0.0);
 
     // =========================================================================
     // LAYER 3: Anisotropic Static Metallic Reflection  (Phase 7.5 refined)
@@ -127,10 +128,10 @@ void main() {
     // it has the same micro-facet character as the rest of the surface.
     // Breakup amplitude is very low (0.25 modulation) to keep it subliminal.
 
-    const float STATIC_SIGMA_U  = 0.30;  // broad ambient streak along U (unchanged)
-    const float STATIC_SIGMA_V  = 0.26;  // wide ambient band — preserves smooth V-edge tonal gradient
-    const float STATIC_PEAK     = 0.025; // Phase 14: calibrated against lower base color
-    const float STATIC_BREAKUP  = 0.25;
+    const float STATIC_SIGMA_U  = 0.42;  // broad low-level ambient glass field
+    const float STATIC_SIGMA_V  = 0.36;  // reaches across the glass without lighting its edges
+    const float STATIC_PEAK     = 0.0;   // unlit glass matches the black background
+    const float STATIC_BREAKUP  = 0.35;
 
     float staticDistU  = vUv.x - 0.5;
     float staticDistV  = vUv.y - 0.5;
@@ -158,7 +159,7 @@ void main() {
     //    without creating a glowing border.
     //    pow(…, 2.5) concentrates the catch light within ~5% of each edge.
 
-    const float EDGE_CATCH_PEAK = 0.028;  // increased: catch light reads as a physical edge
+    const float EDGE_CATCH_PEAK = 0.0;    // boundaries read exclusively from black gaps
 
     float leftEdge    = smoothstep(0.0,  0.15, vUv.x);
     float rightEdge   = smoothstep(1.0,  0.85, vUv.x);
@@ -189,7 +190,7 @@ void main() {
 
     float vCenterBrightness = 1.0 + 0.05 * (1.0 - 4.0 * (vUv.y - 0.5) * (vUv.y - 0.5));  // 0.07→0.05: proportionally correct at lower base
     // Neutral surface micro-texture — project color identity preserved.
-    vec3  baseMicroTexture  = vec3(surfaceVariation * 0.006 - 0.003);
+    vec3  baseMicroTexture     = vec3(0.0);
 
     vec3 blendedColor = baseColor + verticalDepth + metallicReflection + vec3(edgeCatch);
     vec3 baseMaterial = blendedColor * edgeFalloff * vCenterBrightness + baseMicroTexture;
@@ -232,62 +233,90 @@ void main() {
     //   Applied to all three lobes identically — the surface roughness
     //   attenuates every lobe, preserving consistent material character.
 
-    const float SWEEP_SIGMA_V        = 0.23;   // tightened 0.30→0.23 — sharper directional streak (Phase 14)
-    const float ROUGHNESS_MODULATION = 0.20;   // increased 0.15→0.20 — more visible surface texture (Phase 14)
+    const float TRAVEL_SIGMA_U         = 0.026; // slender line along its travel path
+    const float CROSS_PANEL_SIGMA_V    = 0.42;  // elongated softly across the panel
+    const float ROUGHNESS_MODULATION  = 0.10;   // microstructure only breaks up reflections
+    const float PRIMARY_INTENSITY      = 0.32;  // restrained studio reflection core
+    const float REFLECTION_INTENSITY   = 0.32;  // prevents bloom and preserves black glass
+    const float PANEL_EXPOSURE         = 0.018; // faint glass reveal carried by the reflection
+    const float SECOND_LIGHT_OFFSET_U   = 0.28;  // separated companion streak on selected panels
+    const float SECOND_LIGHT_INTENSITY  = 0.72;  // keeps the companion softer than the primary
 
-    const float SEC_OFFSET_U  =  0.04;   // secondary lobe U offset from primary
-    const float TER_OFFSET_U  = -0.08;   // tertiary lobe U offset from primary
-    const float SEC_INTENSITY =  0.22;   // secondary lobe relative intensity
-    const float TER_INTENSITY =  0.07;   // tertiary lobe relative intensity
+    const float SEC_OFFSET_U  =  0.018;  // close leading feather for the line
+    const float TER_OFFSET_U  = -0.032;  // close trailing feather for the line
+    const float SEC_INTENSITY =  0.045;  // clean leading feather
+    const float TER_INTENSITY =  0.020;  // clean trailing feather
 
-    // Shared V-axis attenuation (same for all lobes — same strip geometry)
-    float vDist     = vUv.y - 0.5;
-    float vVariance = 2.0 * SWEEP_SIGMA_V * SWEEP_SIGMA_V;
-    float vGaussian = exp(-(vDist * vDist) / vVariance);
+    // The band travels along the long panel axis. Reversing the increasing
+    // sweep makes its screen-space motion run from the upper end to the lower.
+    // Its wide cross-panel profile reproduces the reference's soft horizontal
+    // reflection rather than a bright rail running along the strip.
+    float vDist          = vUv.y - 0.5;
+    float travelPosition = 1.0 - uLightPosition;
 
     // Shared roughness modulation
     float roughnessMod = 1.0 - surfaceVariation * ROUGHNESS_MODULATION;
 
     // --- Primary lobe ---
-    float hDist_P    = vUv.x - uLightPosition;
-    float hVar_P     = 2.0 * uLightWidth * uLightWidth;
-    float hGauss_P   = exp(-(hDist_P * hDist_P) / hVar_P);
+    float uDist_P    = vUv.x - travelPosition;
+    float uVar_P     = 2.0 * TRAVEL_SIGMA_U * TRAVEL_SIGMA_U;
+    float uGauss_P   = exp(-(uDist_P * uDist_P) / uVar_P);
+    float vVar_P     = 2.0 * CROSS_PANEL_SIGMA_V * CROSS_PANEL_SIGMA_V;
+    float vGauss_P   = exp(-(vDist * vDist) / vVar_P);
 
     // Micro-shimmer — threshold lowered 0.55→0.45, exponent 2.0→1.5 (Phase 14):
     // more pervasive micro-sparkle with a softer distribution across the lobe.
     float microGlint  = valueNoise(vUv * vec2(512.0, 8.0));
     float glintMask   = pow(max(microGlint - 0.45, 0.0) / 0.55, 1.5);
-    float shimmerMod  = 1.0 + glintMask * 0.20 * hGauss_P;
+    float shimmerMod  = 1.0 + glintMask * 0.08 * uGauss_P;
 
-    float primaryMask = hGauss_P * vGaussian * roughnessMod * shimmerMod;
+    float primaryMask = uGauss_P * vGauss_P * roughnessMod * shimmerMod;
+
+    // The second and hero panels receive a companion reflection, sharing the
+    // same motion and material response while remaining visibly separated.
+    float uDist_Second = vUv.x - (travelPosition + SECOND_LIGHT_OFFSET_U);
+    float uGauss_Second = exp(-(uDist_Second * uDist_Second) / uVar_P);
+    float secondLightMask = uGauss_Second * vGauss_P * roughnessMod *
+        uSecondaryReflection;
 
     // --- Secondary lobe (white, offset along U) ---
-    float hSigma_S   = uLightWidth * 1.8;
-    float hVar_S     = 2.0 * hSigma_S * hSigma_S;
-    float hDist_S    = vUv.x - (uLightPosition + SEC_OFFSET_U);
-    float hGauss_S   = exp(-(hDist_S * hDist_S) / hVar_S);
-
-    float vSigma_S   = SWEEP_SIGMA_V * 0.85;
+    float uSigma_S   = TRAVEL_SIGMA_U * 1.75;
+    float uVar_S     = 2.0 * uSigma_S * uSigma_S;
+    float uDist_S    = vUv.x - (travelPosition + SEC_OFFSET_U);
+    float uGauss_S   = exp(-(uDist_S * uDist_S) / uVar_S);
+    float vSigma_S   = CROSS_PANEL_SIGMA_V * 1.02;
     float vVar_S     = 2.0 * vSigma_S * vSigma_S;
     float vGauss_S   = exp(-(vDist * vDist) / vVar_S);
 
-    float secondaryMask = hGauss_S * vGauss_S * roughnessMod;
+    float secondaryMask = uGauss_S * vGauss_S * roughnessMod;
 
     // --- Tertiary lobe (white, offset opposite direction along U) ---
-    float hSigma_T   = uLightWidth * 2.5;   // reduced from 3.0 — prevents U bleed (Phase 9)
-    float hVar_T     = 2.0 * hSigma_T * hSigma_T;
-    float hDist_T    = vUv.x - (uLightPosition + TER_OFFSET_U);
-    float hGauss_T   = exp(-(hDist_T * hDist_T) / hVar_T);
-
-    float vSigma_T   = SWEEP_SIGMA_V * 1.60;   // increased from 1.20 — tertiary clearly softest (Phase 9)
+    float uSigma_T   = TRAVEL_SIGMA_U * 2.50;
+    float uVar_T     = 2.0 * uSigma_T * uSigma_T;
+    float uDist_T    = vUv.x - (travelPosition + TER_OFFSET_U);
+    float uGauss_T   = exp(-(uDist_T * uDist_T) / uVar_T);
+    float vSigma_T   = CROSS_PANEL_SIGMA_V * 1.08;
     float vVar_T     = 2.0 * vSigma_T * vSigma_T;
     float vGauss_T   = exp(-(vDist * vDist) / vVar_T);
 
-    float tertiaryMask = hGauss_T * vGauss_T * roughnessMod;
+    float tertiaryMask = uGauss_T * vGauss_T * roughnessMod;
+
+    // A wider, low-energy field reveals the black glass only as the streak
+    // passes. It is derived from the same moving reflection, so it cannot
+    // create ambient illumination or leak into the panel gaps.
+    float exposureSigmaU = TRAVEL_SIGMA_U * 4.0;
+    float exposureSigmaV = CROSS_PANEL_SIGMA_V * 1.15;
+    float exposureU = exp(-(uDist_P * uDist_P) / (2.0 * exposureSigmaU * exposureSigmaU));
+    float exposureUSecond = exp(-(uDist_Second * uDist_Second) /
+        (2.0 * exposureSigmaU * exposureSigmaU)) * uSecondaryReflection;
+    float exposureV = exp(-(vDist * vDist) / (2.0 * exposureSigmaV * exposureSigmaV));
+    vec3 panelExposure = vec3(max(exposureU, exposureUSecond) * exposureV *
+        PANEL_EXPOSURE * roughnessMod);
 
     // Combined white light contribution — all three lobes, stored independently
     vec3 lightContribution =
-        vec3(primaryMask)   * uLightIntensity              // primary
+        vec3(primaryMask)   * uLightIntensity * PRIMARY_INTENSITY // primary
+      + vec3(secondLightMask) * uLightIntensity * PRIMARY_INTENSITY * SECOND_LIGHT_INTENSITY
       + vec3(secondaryMask) * uLightIntensity * SEC_INTENSITY  // secondary
       + vec3(tertiaryMask)  * uLightIntensity * TER_INTENSITY; // tertiary
 
@@ -300,32 +329,34 @@ void main() {
     // chromatic character. This matches premium anodized metal behaviour.
     //
     // Architecture unchanged from Phase 6.5:
-    //   COLOR_SPREAD_U = 1.6 → σ_color_U = uLightWidth × 1.6
-    //   COLOR_SPREAD_V = 1.1 → σ_color_V = SWEEP_SIGMA_V × 1.1
+    //   COLOR_SPREAD_U = 1.6 → σ_color_U = TRAVEL_SIGMA_U × 1.6
+    //   COLOR_SPREAD_V = 1.1 → σ_color_V = CROSS_PANEL_SIGMA_V × 1.1
     // The color lobe is wider than the white primary lobe, producing the
     // white-core / pink-fringe appearance.
 
     const float COLOR_SPREAD_U = 1.6;
-    const float COLOR_SPREAD_V = 1.1;
+    const float COLOR_SPREAD_V = 1.55;
 
-    float hSigmaColor    = uLightWidth * COLOR_SPREAD_U;
-    float hVarColor      = 2.0 * hSigmaColor * hSigmaColor;
-    float hGaussColor    = exp(-(hDist_P * hDist_P) / hVarColor);   // anchored to primary
+    float uSigmaColor    = TRAVEL_SIGMA_U * COLOR_SPREAD_U;
+    float uVarColor      = 2.0 * uSigmaColor * uSigmaColor;
+    float uGaussColor    = exp(-(uDist_P * uDist_P) / uVarColor);   // anchored to primary
 
-    float vSigmaColor    = SWEEP_SIGMA_V * COLOR_SPREAD_V;
+    float vSigmaColor    = CROSS_PANEL_SIGMA_V * COLOR_SPREAD_V;
     float vVarColor      = 2.0 * vSigmaColor * vSigmaColor;
     float vGaussColor    = exp(-(vDist * vDist) / vVarColor);
 
-    float colorMask         = hGaussColor * vGaussColor * roughnessMod;
+    float uGaussColorSecond = exp(-(uDist_Second * uDist_Second) / uVarColor);
+    float colorMask         = (uGaussColor + uGaussColorSecond *
+        uSecondaryReflection * SECOND_LIGHT_INTENSITY) * vGaussColor * roughnessMod;
     vec3  colorContribution = uLightColor * colorMask * uColorIntensity;
 
     // =========================================================================
     // LAYER 9: HDR Emission & Composition  (unchanged)
     // =========================================================================
-    vec3 lightSum   = lightContribution + colorContribution;
+    vec3 lightSum   = (lightContribution + colorContribution) * REFLECTION_INTENSITY;
 
-    vec3 hdrColor   = baseMaterial + lightSum * uEmissionStrength;
-    vec3 ldrColor   = clamp(baseMaterial + lightSum, 0.0, 1.0);
+    vec3 hdrColor   = baseMaterial + panelExposure + lightSum * uEmissionStrength;
+    vec3 ldrColor   = clamp(baseMaterial + panelExposure + lightSum, 0.0, 1.0);
 
     vec3 finalColor = mix(ldrColor, hdrColor, uEnableEmission);
 

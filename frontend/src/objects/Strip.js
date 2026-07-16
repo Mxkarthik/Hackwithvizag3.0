@@ -30,12 +30,13 @@ const DEFAULTS = {
     scale:            { x: 1.0, y: 1.0 },   // multiplied onto base geometry (4×1)
     rotation:         Math.PI / 4,
     phaseOffset:      0.0,     // seconds — shifts sweep start time
-    sweepSpeed:       0.18,    // cycles / second
+    sweepSpeed:       0.10,    // cycles / second
     sweepMin:        -0.2,     // UV X entry (slightly past left edge)
     sweepMax:         1.2,     // UV X exit  (slightly past right edge)
     emissionStrength: 1.1,
     colorIntensity:   0.45,
     lightIntensity:   1.0,
+    secondaryReflection: false,
 };
 
 // =============================================================================
@@ -64,6 +65,7 @@ export function createStrip(config = {}) {
         emissionStrength: config.emissionStrength ?? DEFAULTS.emissionStrength,
         colorIntensity:   config.colorIntensity   ?? DEFAULTS.colorIntensity,
         lightIntensity:   config.lightIntensity   ?? DEFAULTS.lightIntensity,
+        secondaryReflection: config.secondaryReflection ?? DEFAULTS.secondaryReflection,
     };
 
     // -------------------------------------------------------------------------
@@ -71,8 +73,8 @@ export function createStrip(config = {}) {
     // -------------------------------------------------------------------------
     const uniforms = {
         uTime:             { value: 0 },
-        uBaseColor:        { value: new THREE.Color(0.032, 0.030, 0.028) },  // Phase 14: near-invisible unlit, revealed by reflections
-        uLightColor:       { value: new THREE.Color("#EC044F") },
+        uBaseColor:        { value: new THREE.Color(0.0, 0.0, 0.0) },
+        uLightColor:       { value: new THREE.Color("#D6B7C4") },
         uLightPosition:    { value: cfg.sweepMin },
         uLightWidth:       { value: 0.05 },
         uLightIntensity:   { value: cfg.lightIntensity },
@@ -80,7 +82,8 @@ export function createStrip(config = {}) {
         uEmissionStrength: { value: cfg.emissionStrength },
         uEnableEmission:   { value: 1.0 },
         uMetalStrength:    { value: 1.0 },
-        uNoiseStrength:    { value: 0.4 },  // improved via 3-octave noise (Phase 7.5)
+        uNoiseStrength:    { value: 0.30 }, // restrained stable breakup inside the reflection
+        uSecondaryReflection: { value: cfg.secondaryReflection ? 1.0 : 0.0 },
     };
 
     // -------------------------------------------------------------------------
@@ -206,11 +209,18 @@ export function buildStripSystem() {
 //   slab-5  Y:[−5.51, +0.15]  crops BOT  −1.78u  — lower exit band
 // =============================================================================
 export function buildHeroComposition() {
-    const BASE_SPEED = 0.18;
-    const CYCLE      = 1.0 / BASE_SPEED;   // ≈ 5.56 s
+    const BASE_SPEED = 0.10;
+    const CYCLE      = 1.0 / BASE_SPEED;   // 10 s
     const SIXTH      = CYCLE / 6;           // ≈ 0.93 s — one sixth of cycle
 
     const ROT = -Math.PI / 4;   // -45° — strips lean \\
+
+    const CURRENT_PANEL_SCALE_Y = 1.05;
+    const PANEL_WIDTH_INCREASE  = 0.50;
+    const TARGET_PANEL_GAP      = 0.10;
+    const CURRENT_PANEL_WIDTH   = SHARED_GEOMETRY.parameters.height * CURRENT_PANEL_SCALE_Y;
+    const TIGHT_PANEL_WIDTH     = CURRENT_PANEL_WIDTH + PANEL_WIDTH_INCREASE;
+    const TIGHT_PANEL_SCALE_Y   = TIGHT_PANEL_WIDTH / SHARED_GEOMETRY.parameters.height;
 
     const PANELS = [
 
@@ -222,7 +232,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-0',
             position:         { x:  1.71, y:  2.85, z: -0.08 },
-            scale:            { x:  2.50, y:  1.05 },
+            scale:            { x:  2.50, y:  TIGHT_PANEL_SCALE_Y },
             rotation:         ROT,
             phaseOffset:      0 * SIXTH,
             sweepSpeed:       BASE_SPEED * 0.982,
@@ -238,13 +248,14 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-1',
             position:         { x:  0.93, y:  1.62, z: -0.02 },
-            scale:            { x:  2.50, y:  1.05 },
+            scale:            { x:  2.50, y:  TIGHT_PANEL_SCALE_Y },
             rotation:         ROT,
             phaseOffset:      1 * SIXTH,
             sweepSpeed:       BASE_SPEED * 1.018,
             emissionStrength: 1.10,
             colorIntensity:   0.44,
             lightIntensity:   0.94,
+            secondaryReflection: true,
         },
 
         // ── slab-2: HERO ─────────────────────────────────────────────────────
@@ -255,13 +266,14 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-2',
             position:         { x:  0.03, y:  0.52, z:  0.10 },
-            scale:            { x:  2.50, y:  1.05 },
+            scale:            { x:  2.50, y:  TIGHT_PANEL_SCALE_Y },
             rotation:         ROT,
             phaseOffset:      2 * SIXTH,
             sweepSpeed:       BASE_SPEED * 1.000,
             emissionStrength: 1.22,
             colorIntensity:   0.54,
             lightIntensity:   1.00,
+            secondaryReflection: true,
         },
 
         // ── slab-3: Mid band ─────────────────────────────────────────────────
@@ -271,7 +283,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-3',
             position:         { x: -0.88, y: -0.64, z:  0.04 },
-            scale:            { x:  2.50, y:  1.05 },
+            scale:            { x:  2.50, y:  TIGHT_PANEL_SCALE_Y },
             rotation:         ROT,
             phaseOffset:      3 * SIXTH,
             sweepSpeed:       BASE_SPEED * 0.975,
@@ -287,7 +299,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-4',
             position:         { x: -1.66, y: -1.73, z: -0.06 },
-            scale:            { x:  2.50, y:  1.05 },
+            scale:            { x:  2.50, y:  TIGHT_PANEL_SCALE_Y },
             rotation:         ROT,
             phaseOffset:      4 * SIXTH,
             sweepSpeed:       BASE_SPEED * 1.024,
@@ -304,7 +316,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-5',
             position:         { x: -2.43, y: -2.68, z: -0.14 },
-            scale:            { x:  2.50, y:  1.05 },
+            scale:            { x:  2.50, y:  TIGHT_PANEL_SCALE_Y },
             rotation:         ROT,
             phaseOffset:      5 * SIXTH,
             sweepSpeed:       BASE_SPEED * 0.978,
@@ -331,6 +343,27 @@ export function buildHeroComposition() {
 
         panel.position.x += registrationOffset * longAxis.x;
         panel.position.y += registrationOffset * longAxis.y;
+    });
+
+    // Tighten on the perpendicular axis while retaining the existing outer
+    // midpoint. The pitch is derived from the new panel width and target gap.
+    const normalAxis = new THREE.Vector2(-longAxis.y, longAxis.x);
+    const normalPositions = PANELS.map((panel) =>
+        panel.position.x * normalAxis.x + panel.position.y * normalAxis.y
+    );
+    const assemblyNormalCenter =
+        (Math.max(...normalPositions) + Math.min(...normalPositions)) / 2;
+    const panelPitch = TIGHT_PANEL_WIDTH + TARGET_PANEL_GAP;
+
+    PANELS.forEach((panel, index) => {
+        const panelNormalPosition =
+            panel.position.x * normalAxis.x + panel.position.y * normalAxis.y;
+        const targetNormalPosition = assemblyNormalCenter +
+            ((PANELS.length - 1) / 2 - index) * panelPitch;
+        const spacingOffset = targetNormalPosition - panelNormalPosition;
+
+        panel.position.x += spacingOffset * normalAxis.x;
+        panel.position.y += spacingOffset * normalAxis.y;
     });
 
     return PANELS.map(cfg => createStrip(cfg));
