@@ -1,5 +1,6 @@
 import "./style.css";
 import * as THREE from "three";
+import createStrip from "./objects/Strip.js";
 
 const scene = new THREE.Scene();
 
@@ -33,20 +34,7 @@ renderer.setAnimationLoop(() => {
 
 });
 
-const geometry = new THREE.PlaneGeometry(
-    4, // Width
-    1 // Height 
-);
+const stripMesh = createStrip();
+scene.add(stripMesh);
 
-const material = new THREE.MeshBasicMaterial({
-    color: 0x2B2B2B
-});
-
-
-const panel = new THREE.Mesh(
-    geometry,
-    material
-);
-
-scene.add(panel);
 
