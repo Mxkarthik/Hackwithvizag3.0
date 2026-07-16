@@ -37,6 +37,9 @@ export default function createStrip() {
         uLightIntensity: {
             value: 1.0           // peak brightness — animated in Phase 5
         },
+        uColorIntensity: {
+            value: 0.6           // relative strength of the colored lobe vs. the white lobe
+        },
         uMetalStrength: {
             value: 1.0
         },

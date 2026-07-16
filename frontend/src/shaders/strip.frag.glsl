@@ -3,10 +3,11 @@ varying vec2 vUv;
 // Future-compatible uniforms for the next phases
 uniform float uTime;
 uniform vec3 uBaseColor;
-uniform vec3 uLightColor;
+uniform vec3 uLightColor;       // Brand color applied as the wider colored fringe (Phase 5)
 uniform float uLightPosition;   // Owned and animated by JavaScript — do NOT derive in shader
 uniform float uLightWidth;      // Standard deviation (σ) of the horizontal Gaussian lobe
-uniform float uLightIntensity;  // Peak brightness of the sweep — animated in Phase 5
+uniform float uLightIntensity;  // Peak brightness of the white lobe
+uniform float uColorIntensity;  // Relative strength of the colored lobe vs. the white lobe
 uniform float uMetalStrength;
 uniform float uNoiseStrength;
 
@@ -177,13 +178,45 @@ void main() {
     // D. Composite light contribution
     //    uLightIntensity controls peak brightness — kept as a uniform so
     //    Phase 5 can animate it (fade in/out, pulse, etc.) from JavaScript.
-    //    Light color is vec3(1.0) (white) in Phase 4.
-    //    uLightColor (pink) is wired up in Phase 5.
-    float lightMask        = hGaussian * vGaussian * roughnessMod;
+    //    Light color is vec3(1.0) (white) — the white energy source.
+    //    The colored fringe is added in Layer 8.
+    float lightMask         = hGaussian * vGaussian * roughnessMod;
     vec3  lightContribution = vec3(lightMask) * uLightIntensity;
 
-    // Add the light on top of the fully composited base material.
+    // Add the white light on top of the fully composited base material.
     finalColor += lightContribution;
+
+    // -----------------------------------------------------------------
+    // LAYER 8: Colored Illumination  (Phase 5)
+    // -----------------------------------------------------------------
+    // A second, wider Gaussian lobe at the same position as the white
+    // lobe. Because it is broader, it dominates at the edges of the
+    // highlight while the narrow white lobe dominates at the centre.
+    //
+    // Result: white core → brand color fringe, with no manual transitions.
+    // The effect emerges purely from the two-lobe width difference.
+    //
+    // Shares uLightPosition, vGaussian, roughnessMod, and hDist with
+    // Layer 7 — no redundant calculations.
+    //
+    // COLOR_SPREAD_FACTOR defines how much wider the colored lobe is
+    // relative to the white lobe (σ_color = uLightWidth × COLOR_SPREAD_FACTOR).
+
+    const float COLOR_SPREAD_FACTOR = 2.5;  // colored lobe is 2.5× wider than white
+
+    // Wider horizontal Gaussian using the same centre (hDist) already computed above.
+    float hSigmaColor    = uLightWidth * COLOR_SPREAD_FACTOR;
+    float hVarianceColor = 2.0 * hSigmaColor * hSigmaColor;         // 2σ²
+    float hGaussianColor = exp(-(hDist * hDist) / hVarianceColor);
+
+    // Reuse vGaussian and roughnessMod from Layer 7 — same physics apply.
+    float colorMask         = hGaussianColor * vGaussian * roughnessMod;
+    vec3  colorContribution = uLightColor * colorMask * uColorIntensity;
+
+    // Additive composite — color adds energy on top of the white lobe.
+    // At the peak both lobes sum toward white (clamped).
+    // Away from the peak the white has decayed and the brand color dominates.
+    finalColor += colorContribution;
 
     // Clamp the final color to prevent any clipping/harsh highlights and keep it premium.
     gl_FragColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);
