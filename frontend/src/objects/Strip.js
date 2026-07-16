@@ -71,7 +71,7 @@ export function createStrip(config = {}) {
     // -------------------------------------------------------------------------
     const uniforms = {
         uTime:             { value: 0 },
-        uBaseColor:        { value: new THREE.Color(0.052, 0.052, 0.052) },
+        uBaseColor:        { value: new THREE.Color(0.032, 0.030, 0.028) },  // Phase 14: near-invisible unlit, revealed by reflections
         uLightColor:       { value: new THREE.Color("#EC044F") },
         uLightPosition:    { value: cfg.sweepMin },
         uLightWidth:       { value: 0.05 },
@@ -314,6 +314,24 @@ export function buildHeroComposition() {
         },
 
     ];
+
+    // Register every leading edge to the hero slab.  Moving only along the
+    // shared long axis preserves the existing perpendicular strip spacing,
+    // depth layering, and stagger while placing their leading edges on one
+    // common construction line.
+    const masterPanel = PANELS.find(({ id }) => id === 'panel-slab-2');
+    const longAxis = new THREE.Vector2(Math.cos(ROT), Math.sin(ROT));
+    const masterAxisPosition =
+        masterPanel.position.x * longAxis.x + masterPanel.position.y * longAxis.y;
+
+    PANELS.forEach((panel) => {
+        const panelAxisPosition =
+            panel.position.x * longAxis.x + panel.position.y * longAxis.y;
+        const registrationOffset = masterAxisPosition - panelAxisPosition;
+
+        panel.position.x += registrationOffset * longAxis.x;
+        panel.position.y += registrationOffset * longAxis.y;
+    });
 
     return PANELS.map(cfg => createStrip(cfg));
 }

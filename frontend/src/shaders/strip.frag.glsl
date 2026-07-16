@@ -114,7 +114,7 @@ void main() {
     // Subtle V-axis gradient adds three-dimensional depth.
     // Increased from 0.006 → 0.011 — strip still nearly disappears unlit.
     float verticalGradientFactor = vUv.y;
-    vec3 verticalDepth = mix(vec3(0.0), vec3(0.011), verticalGradientFactor);
+    vec3 verticalDepth = mix(vec3(0.0), vec3(0.008), verticalGradientFactor);  // 0.016→0.008: depth cue at correct proportion to lower base
 
     // =========================================================================
     // LAYER 3: Anisotropic Static Metallic Reflection  (Phase 7.5 refined)
@@ -127,10 +127,10 @@ void main() {
     // it has the same micro-facet character as the rest of the surface.
     // Breakup amplitude is very low (0.25 modulation) to keep it subliminal.
 
-    const float STATIC_SIGMA_U  = 0.18;
-    const float STATIC_SIGMA_V  = 0.08;
-    const float STATIC_PEAK     = 0.012;
-    const float STATIC_BREAKUP  = 0.25;  // surface variation influence on static streak
+    const float STATIC_SIGMA_U  = 0.30;  // broad ambient streak along U (unchanged)
+    const float STATIC_SIGMA_V  = 0.26;  // wide ambient band — preserves smooth V-edge tonal gradient
+    const float STATIC_PEAK     = 0.025; // Phase 14: calibrated against lower base color
+    const float STATIC_BREAKUP  = 0.25;
 
     float staticDistU  = vUv.x - 0.5;
     float staticDistV  = vUv.y - 0.5;
@@ -142,7 +142,10 @@ void main() {
     // getSurfaceVariation() here directly (it has no dependency on later layers).
     float surfaceVariation  = getSurfaceVariation(vUv) * uNoiseStrength;
     float staticBreakupMod  = 1.0 - surfaceVariation * STATIC_BREAKUP;
-    vec3  metallicReflection = vec3(staticGaussU * staticGaussV * STATIC_PEAK * uMetalStrength * staticBreakupMod);
+    // Neutral ambient reflection — no warm tint.
+    // Project color identity is preserved; warmth comes from the brand accent sweep.
+    float staticScalar   = staticGaussU * staticGaussV * STATIC_PEAK * uMetalStrength * staticBreakupMod;
+    vec3  metallicReflection = vec3(staticScalar);
 
     // =========================================================================
     // LAYER 4: Edge Falloff + Edge Catch Light  (Phase 7.5 refined)
@@ -155,7 +158,7 @@ void main() {
     //    without creating a glowing border.
     //    pow(…, 2.5) concentrates the catch light within ~5% of each edge.
 
-    const float EDGE_CATCH_PEAK = 0.018;
+    const float EDGE_CATCH_PEAK = 0.028;  // increased: catch light reads as a physical edge
 
     float leftEdge    = smoothstep(0.0,  0.15, vUv.x);
     float rightEdge   = smoothstep(1.0,  0.85, vUv.x);
@@ -163,7 +166,9 @@ void main() {
 
     float catchLeft   = pow(1.0 - smoothstep(0.0,  0.06, vUv.x), 2.5);
     float catchRight  = pow(1.0 - smoothstep(0.94, 1.0,  vUv.x), 2.5);
-    float edgeCatch   = (catchLeft + catchRight) * EDGE_CATCH_PEAK;
+    // Edge catch light modulated by staticGaussV — strongest at V-centre,
+    // fades toward V-extremes, simulating curvature-dependent grazing light.
+    float edgeCatch   = (catchLeft + catchRight) * EDGE_CATCH_PEAK * staticGaussV;
 
     // =========================================================================
     // LAYER 5: Soft Tonal Adjustment  (Phase 7.5 — V-center brightness + micro-texture)
@@ -182,7 +187,8 @@ void main() {
     //    the perceptual threshold as standalone texture but combines with
     //    the edge and gradient layers to give premium surface depth.
 
-    float vCenterBrightness = 1.0 + 0.04 * (1.0 - 4.0 * (vUv.y - 0.5) * (vUv.y - 0.5));
+    float vCenterBrightness = 1.0 + 0.05 * (1.0 - 4.0 * (vUv.y - 0.5) * (vUv.y - 0.5));  // 0.07→0.05: proportionally correct at lower base
+    // Neutral surface micro-texture — project color identity preserved.
     vec3  baseMicroTexture  = vec3(surfaceVariation * 0.006 - 0.003);
 
     vec3 blendedColor = baseColor + verticalDepth + metallicReflection + vec3(edgeCatch);
@@ -226,8 +232,8 @@ void main() {
     //   Applied to all three lobes identically — the surface roughness
     //   attenuates every lobe, preserving consistent material character.
 
-    const float SWEEP_SIGMA_V        = 0.30;   // V-axis streak height (tightened Phase 9 — elongated streak)
-    const float ROUGHNESS_MODULATION = 0.15;  // max roughness attenuation (Phase 9 — refined brushed-metal)
+    const float SWEEP_SIGMA_V        = 0.23;   // tightened 0.30→0.23 — sharper directional streak (Phase 14)
+    const float ROUGHNESS_MODULATION = 0.20;   // increased 0.15→0.20 — more visible surface texture (Phase 14)
 
     const float SEC_OFFSET_U  =  0.04;   // secondary lobe U offset from primary
     const float TER_OFFSET_U  = -0.08;   // tertiary lobe U offset from primary
@@ -247,13 +253,11 @@ void main() {
     float hVar_P     = 2.0 * uLightWidth * uLightWidth;
     float hGauss_P   = exp(-(hDist_P * hDist_P) / hVar_P);
 
-    // Micro-shimmer — high-frequency noise over the primary lobe
-    // Only the top percentile of the noise produces a visible glint.
-    // Phase 9: threshold lowered 0.60→0.55 (more micro-glints),
-    //          multiplier reduced 0.25→0.20 (each glint subtler).
+    // Micro-shimmer — threshold lowered 0.55→0.45, exponent 2.0→1.5 (Phase 14):
+    // more pervasive micro-sparkle with a softer distribution across the lobe.
     float microGlint  = valueNoise(vUv * vec2(512.0, 8.0));
-    float glintMask   = pow(max(microGlint - 0.55, 0.0) / 0.45, 2.0);
-    float shimmerMod  = 1.0 + glintMask * 0.20 * hGauss_P;  // attenuated by lobe
+    float glintMask   = pow(max(microGlint - 0.45, 0.0) / 0.55, 1.5);
+    float shimmerMod  = 1.0 + glintMask * 0.20 * hGauss_P;
 
     float primaryMask = hGauss_P * vGaussian * roughnessMod * shimmerMod;
 
