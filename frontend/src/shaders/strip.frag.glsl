@@ -226,8 +226,8 @@ void main() {
     //   Applied to all three lobes identically — the surface roughness
     //   attenuates every lobe, preserving consistent material character.
 
-    const float SWEEP_SIGMA_V       = 0.50;   // V-axis streak height
-    const float ROUGHNESS_MODULATION = 0.12;  // max roughness attenuation
+    const float SWEEP_SIGMA_V        = 0.30;   // V-axis streak height (tightened Phase 9 — elongated streak)
+    const float ROUGHNESS_MODULATION = 0.15;  // max roughness attenuation (Phase 9 — refined brushed-metal)
 
     const float SEC_OFFSET_U  =  0.04;   // secondary lobe U offset from primary
     const float TER_OFFSET_U  = -0.08;   // tertiary lobe U offset from primary
@@ -249,9 +249,11 @@ void main() {
 
     // Micro-shimmer — high-frequency noise over the primary lobe
     // Only the top percentile of the noise produces a visible glint.
+    // Phase 9: threshold lowered 0.60→0.55 (more micro-glints),
+    //          multiplier reduced 0.25→0.20 (each glint subtler).
     float microGlint  = valueNoise(vUv * vec2(512.0, 8.0));
-    float glintMask   = pow(max(microGlint - 0.6, 0.0) / 0.4, 2.0);
-    float shimmerMod  = 1.0 + glintMask * 0.25 * hGauss_P;  // attenuated by lobe
+    float glintMask   = pow(max(microGlint - 0.55, 0.0) / 0.45, 2.0);
+    float shimmerMod  = 1.0 + glintMask * 0.20 * hGauss_P;  // attenuated by lobe
 
     float primaryMask = hGauss_P * vGaussian * roughnessMod * shimmerMod;
 
@@ -268,12 +270,12 @@ void main() {
     float secondaryMask = hGauss_S * vGauss_S * roughnessMod;
 
     // --- Tertiary lobe (white, offset opposite direction along U) ---
-    float hSigma_T   = uLightWidth * 3.0;
+    float hSigma_T   = uLightWidth * 2.5;   // reduced from 3.0 — prevents U bleed (Phase 9)
     float hVar_T     = 2.0 * hSigma_T * hSigma_T;
     float hDist_T    = vUv.x - (uLightPosition + TER_OFFSET_U);
     float hGauss_T   = exp(-(hDist_T * hDist_T) / hVar_T);
 
-    float vSigma_T   = SWEEP_SIGMA_V * 1.20;
+    float vSigma_T   = SWEEP_SIGMA_V * 1.60;   // increased from 1.20 — tertiary clearly softest (Phase 9)
     float vVar_T     = 2.0 * vSigma_T * vSigma_T;
     float vGauss_T   = exp(-(vDist * vDist) / vVar_T);
 
