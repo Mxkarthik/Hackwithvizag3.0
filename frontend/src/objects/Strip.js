@@ -180,81 +180,51 @@ export function buildStripSystem() {
 }
 
 // =============================================================================
-// buildHeroComposition()  — Phase 9.5 final reference-matched composition
+// buildHeroComposition()  — Phase 10: orientation corrected, 6-strip composition
 // =============================================================================
+//
+// ROTATION: -Math.PI/4  (strips lean \\ — top-right to bottom-left)
 //
 // COMPOSITION MODEL
 // -----------------
-// 7 strips forming a dense diagonal slab system at +Math.PI/4 rotation.
-// Strips lean like / (top-left to bottom-right).
+// 6 strips forming a dense diagonal slab system.
+// Derived directly from the Phase 9.5 7-strip composition by:
+//   1. Negating all X positions (mirrors the composition left↔right)
+//   2. Flipping rotation sign (+PI/4 → -PI/4)
+//   3. Removing slab-6 (exit accent — least visible, <5% of visible area)
+//   4. Updating phase offsets from SEVENTH → SIXTH intervals
 //
-// Positions and sizes derived directly from pixel-accurate measurement of
-// the reference image, converted to world-space coordinates at camera z=9.
+// All Y positions, Z depths, scale values, emission, color intensity,
+// light intensity, sweep speeds, and all other properties are unchanged.
 //
-// SYSTEM PROPERTIES
-// -----------------
-// Strip thickness (scaleY): 0.76–1.05 world units  (~1/8 of viewport height)
-// Strip length   (scaleX): 1.50–2.70 → world 6.0–10.8 units
-// Pitch between centres:   ~1.10–1.25 world units
-// Horizontal coverage:     ~80% of 13.25-unit viewport width
-// Vertical coverage:       all 7 strips span from +6.27 to −5.80 world units
-//
-// CROPPING INTENT
-// ---------------
-// Every strip crops at least one viewport edge.
-// Upper strips (0–2) crop the top. Lower strips (3–6) crop the bottom.
-// The composition reads as a window into a much larger layered structure.
-//
-// HIERARCHY
-// ---------
-//   slab-2  HERO       — widest (10.8), thickest (1.05), max emission
-//   slab-1  UPPER      — second longest (9.8), strong secondary
-//   slab-3  MID        — nearly hero width (9.6), anchors lower half
-//   slab-0  ENTRY      — long (8.8) but mostly above viewport
-//   slab-4  LOWER-MID  — receding (8.4), exits bottom
-//   slab-5  LOWER      — dimmer (7.2), mostly below frame
-//   slab-6  ACCENT     — smallest (6.0), barely visible — exit strip
-//
-// DEPTH LAYERING (z values, depthWrite:false — scene add order matters)
-//   +0.10  slab-2 hero         → foreground
-//   +0.04  slab-3 mid          → near-foreground
-//   +0.02  slab-6 accent       → mid
-//   +0.00  slab-?              → mid
-//   −0.02  slab-1 upper        → mid-back
-//   −0.06  slab-4 lower-mid    → back
-//   −0.08  slab-0 entry        → back
-//   −0.14  slab-5 lower        → deepest back
-//
-// TIMING
-//   Base sweep speed: 0.18 cycles/s (≈ 5.56 s per pass)
-//   7 phase offsets at SEVENTH intervals — evenly staggered at t=0
-//   Per-strip speed variation ±2–3% causes natural drift over time
+// VIEWPORT BEHAVIOUR (Y extents identical to Phase 9.5)
+//   slab-0  Y:[−0.57, +6.27]  crops TOP  +2.54u  — entry from upper-right
+//   slab-1  Y:[−2.17, +5.41]  crops TOP  +1.68u  — upper band
+//   slab-2  Y:[−3.67, +4.71]  crops TOP  +0.98u  — HERO, foreground
+//   slab-3  Y:[−4.35, +3.07]  crops BOT  −0.62u  — mid companion
+//   slab-4  Y:[−5.00, +1.54]  crops BOT  −1.27u  — lower-mid, receding
+//   slab-5  Y:[−5.51, +0.15]  crops BOT  −1.78u  — lower exit band
 // =============================================================================
 export function buildHeroComposition() {
     const BASE_SPEED = 0.18;
-    const CYCLE      = 1.0 / BASE_SPEED;     // ≈ 5.56 s
-    const SEVENTH    = CYCLE / 7;             // ≈ 0.79 s — one seventh of cycle
+    const CYCLE      = 1.0 / BASE_SPEED;   // ≈ 5.56 s
+    const SIXTH      = CYCLE / 6;           // ≈ 0.93 s — one sixth of cycle
 
-    const ROT = Math.PI / 4;   // +45° — strips lean /
+    const ROT = -Math.PI / 4;   // -45° — strips lean \\
 
-    // -------------------------------------------------------------------------
-    // PANELS — every value individually designed to match the reference.
-    // Positions derived from reference pixel measurements at camera z=9.
-    // -------------------------------------------------------------------------
     const PANELS = [
 
         // ── slab-0: Entry band ───────────────────────────────────────────────
-        // World: 8.8 × 0.86.  Projected half-span ≈ 3.42.
-        // Y range: [−0.57, +6.27] → crops top by +2.54 units.
-        // Only the lower half is visible. Creates the dark upper-left triangle
-        // that is the viewer's entry point into the composition.
-        // Dimmer emission — it is partially behind the frame.
+        // World: 8.8 × 0.86.  Crops top +2.54u.
+        // X mirrored from Phase 9.5: -1.71 → +1.71
+        // Enters from upper-right. Creates the dark upper-right triangle
+        // that anchors the entry corner of the composition.
         {
             id:               'panel-slab-0',
-            position:         { x: -1.71, y:  2.85, z: -0.08 },
+            position:         { x:  1.71, y:  2.85, z: -0.08 },
             scale:            { x:  2.20, y:  0.86 },
             rotation:         ROT,
-            phaseOffset:      0 * SEVENTH,
+            phaseOffset:      0 * SIXTH,
             sweepSpeed:       BASE_SPEED * 0.982,
             emissionStrength: 1.00,
             colorIntensity:   0.38,
@@ -262,16 +232,15 @@ export function buildHeroComposition() {
         },
 
         // ── slab-1: Upper band ───────────────────────────────────────────────
-        // World: 9.8 × 0.92.  Projected half-span ≈ 3.79.
-        // Y range: [−2.17, +5.41] → crops top by +1.68 units.
-        // Second-longest strip. First band the eye resolves as nearly-complete.
-        // Establishes the scale of the system before the hero reveals itself.
+        // World: 9.8 × 0.92.  Crops top +1.68u.
+        // X mirrored: -0.93 → +0.93
+        // Second-longest strip — establishes the scale of the system.
         {
             id:               'panel-slab-1',
-            position:         { x: -0.93, y:  1.62, z: -0.02 },
+            position:         { x:  0.93, y:  1.62, z: -0.02 },
             scale:            { x:  2.45, y:  0.92 },
             rotation:         ROT,
-            phaseOffset:      1 * SEVENTH,
+            phaseOffset:      1 * SIXTH,
             sweepSpeed:       BASE_SPEED * 1.018,
             emissionStrength: 1.10,
             colorIntensity:   0.44,
@@ -279,19 +248,16 @@ export function buildHeroComposition() {
         },
 
         // ── slab-2: HERO ─────────────────────────────────────────────────────
-        // World: 10.8 × 1.05.  Projected half-span ≈ 4.19.
-        // Y range: [−3.67, +4.71] → crops top +0.98.
-        // X range: [−4.22, +4.16] → spans 80% of viewport width.
-        // THE dominant element. Widest, thickest, highest emission.
-        // Centre near screen midpoint, slightly above horizontal axis.
+        // World: 10.8 × 1.05.  Crops top +0.98u. Spans 80% viewport width.
+        // X mirrored: -0.03 → +0.03  (hero remains near-centre)
+        // Dominant element — widest, thickest, highest emission.
         // Slightly in front (z=+0.10) — foreground layer.
-        // The light sweep is most visible and prominent on this strip.
         {
             id:               'panel-slab-2',
-            position:         { x: -0.03, y:  0.52, z:  0.10 },
+            position:         { x:  0.03, y:  0.52, z:  0.10 },
             scale:            { x:  2.70, y:  1.05 },
             rotation:         ROT,
-            phaseOffset:      2 * SEVENTH,
+            phaseOffset:      2 * SIXTH,
             sweepSpeed:       BASE_SPEED * 1.000,
             emissionStrength: 1.22,
             colorIntensity:   0.54,
@@ -299,17 +265,15 @@ export function buildHeroComposition() {
         },
 
         // ── slab-3: Mid band ─────────────────────────────────────────────────
-        // World: 9.6 × 0.90.  Projected half-span ≈ 3.71.
-        // Y range: [−4.35, +3.07] → crops bottom by −0.62 units.
-        // Nearly hero-width at 9.6 units — reads as a strong companion.
-        // Together with the hero, this strip forms the visual spine.
-        // Slightly forward (z=+0.04).
+        // World: 9.6 × 0.90.  Crops bottom −0.62u.
+        // X mirrored: +0.88 → -0.88
+        // Strong mid companion — forms the visual spine with the hero.
         {
             id:               'panel-slab-3',
-            position:         { x:  0.88, y: -0.64, z:  0.04 },
+            position:         { x: -0.88, y: -0.64, z:  0.04 },
             scale:            { x:  2.40, y:  0.90 },
             rotation:         ROT,
-            phaseOffset:      3 * SEVENTH,
+            phaseOffset:      3 * SIXTH,
             sweepSpeed:       BASE_SPEED * 0.975,
             emissionStrength: 1.12,
             colorIntensity:   0.46,
@@ -317,17 +281,15 @@ export function buildHeroComposition() {
         },
 
         // ── slab-4: Lower-mid band ───────────────────────────────────────────
-        // World: 8.4 × 0.84.  Projected half-span ≈ 3.27.
-        // Y range: [−5.00, +1.54] → crops bottom by −1.27 units.
-        // Over a third of this strip is below the viewport.
-        // Reinforces the downward exit of the composition.
-        // Behind (z=−0.06).
+        // World: 8.4 × 0.84.  Crops bottom −1.27u.
+        // X mirrored: +1.66 → -1.66
+        // Over a third below the viewport. Reinforces the downward exit.
         {
             id:               'panel-slab-4',
-            position:         { x:  1.66, y: -1.73, z: -0.06 },
+            position:         { x: -1.66, y: -1.73, z: -0.06 },
             scale:            { x:  2.10, y:  0.84 },
             rotation:         ROT,
-            phaseOffset:      4 * SEVENTH,
+            phaseOffset:      4 * SIXTH,
             sweepSpeed:       BASE_SPEED * 1.024,
             emissionStrength: 1.05,
             colorIntensity:   0.42,
@@ -335,40 +297,20 @@ export function buildHeroComposition() {
         },
 
         // ── slab-5: Lower band ───────────────────────────────────────────────
-        // World: 7.2 × 0.80.  Projected half-span ≈ 2.83.
-        // Y range: [−5.51, +0.15] → crops bottom by −1.78 units.
-        // Only a thin slice of this strip's upper edge is visible.
-        // Confirms the system continues below the frame.
-        // Deepest back (z=−0.14) — intentionally recedes.
+        // World: 7.2 × 0.80.  Crops bottom −1.78u.
+        // X mirrored: +2.43 → -2.43
+        // Only a thin slice visible at top. Confirms the system exits below-left.
+        // Deepest back (z=−0.14).
         {
             id:               'panel-slab-5',
-            position:         { x:  2.43, y: -2.68, z: -0.14 },
+            position:         { x: -2.43, y: -2.68, z: -0.14 },
             scale:            { x:  1.80, y:  0.80 },
             rotation:         ROT,
-            phaseOffset:      5 * SEVENTH,
+            phaseOffset:      5 * SIXTH,
             sweepSpeed:       BASE_SPEED * 0.978,
             emissionStrength: 0.96,
             colorIntensity:   0.38,
             lightIntensity:   0.86,
-        },
-
-        // ── slab-6: Exit accent ──────────────────────────────────────────────
-        // World: 6.0 × 0.76.  Projected half-span ≈ 2.39.
-        // Y range: [−5.80, −1.02] → entirely below −1.02 world units.
-        //   Crops bottom by −2.07 units. Only the very top sliver is visible.
-        // This strip is barely perceptible — it is the final confirmation
-        // that the slab system extends far beyond the bottom-right corner.
-        // Minimal emission — it should barely register.
-        {
-            id:               'panel-slab-6',
-            position:         { x:  3.08, y: -3.41, z:  0.02 },
-            scale:            { x:  1.50, y:  0.76 },
-            rotation:         ROT,
-            phaseOffset:      6 * SEVENTH,
-            sweepSpeed:       BASE_SPEED * 1.012,
-            emissionStrength: 0.88,
-            colorIntensity:   0.32,
-            lightIntensity:   0.80,
         },
 
     ];
