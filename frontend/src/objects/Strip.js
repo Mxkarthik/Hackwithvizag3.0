@@ -9,31 +9,30 @@ import fragmentShader from "../shaders/strip.frag.glsl";
 //   U (vUv.x) → long axis  (width  = 4 units)
 //   V (vUv.y) → short axis (height = 1 unit)
 //
-// All six strip meshes reference this single geometry object.
-// The GPU receives one VBO upload regardless of instance count.
+// UV coordinates span [0,1]×[0,1] regardless of mesh.scale.
+// The shader's noise, Gaussians, and edge falloffs are UV-space operations,
+// so material character scales proportionally with panel size — correct.
 // =============================================================================
 const SHARED_GEOMETRY = new THREE.PlaneGeometry(4, 1);
 
-// Shader sources are imported as strings by vite-plugin-glsl.
-// Three.js WebGLPrograms caches compiled programs keyed on the source strings.
-// All six ShaderMaterial instances share one compiled GPU program.
+// Shader sources imported as strings by vite-plugin-glsl.
+// Three.js WebGLPrograms caches programs keyed on source strings —
+// all instances share one compiled GPU program.
 const VERTEX_SHADER   = vertexShader;
 const FRAGMENT_SHADER = fragmentShader;
 
 // =============================================================================
 // DEFAULT CONFIG
 // =============================================================================
-// All createStrip() parameters are optional — defaults are applied here.
-// Values match the Phase 6.5 tuned baseline.
-// =============================================================================
 const DEFAULTS = {
     id:               "strip",
     position:         new THREE.Vector3(0, 0, 0),
+    scale:            { x: 1.0, y: 1.0 },   // multiplied onto base geometry (4×1)
     rotation:         Math.PI / 4,
-    phaseOffset:      0.0,           // seconds — shifts sweep start time
-    sweepSpeed:       0.18,          // cycles / second
-    sweepMin:        -0.2,           // UV X entry (slightly past left edge)
-    sweepMax:         1.2,           // UV X exit  (slightly past right edge)
+    phaseOffset:      0.0,     // seconds — shifts sweep start time
+    sweepSpeed:       0.18,    // cycles / second
+    sweepMin:        -0.2,     // UV X entry (slightly past left edge)
+    sweepMax:         1.2,     // UV X exit  (slightly past right edge)
     emissionStrength: 1.1,
     colorIntensity:   0.45,
     lightIntensity:   1.0,
@@ -46,19 +45,17 @@ const DEFAULTS = {
 //   { id, mesh, update(t), setLightColor(c), setEmission(v),
 //     setColorIntensity(v), setLightSpeed(v) }
 //
-// The caller is responsible for:
-//   1. Adding instance.mesh to the scene.
-//   2. Calling instance.update(t) every frame with wall-clock seconds.
+// Caller responsibilities:
+//   1. Add instance.mesh to the scene.
+//   2. Call instance.update(t) every frame with wall-clock seconds.
 //
-// SHADER FILES ARE NOT MODIFIED — this factory is purely JS architecture.
+// Shader files are NOT modified — purely JS architecture.
 // =============================================================================
 export function createStrip(config = {}) {
-    // -------------------------------------------------------------------------
-    // Merge config with defaults
-    // -------------------------------------------------------------------------
     const cfg = {
         id:               config.id               ?? DEFAULTS.id,
         position:         config.position         ?? DEFAULTS.position,
+        scale:            config.scale            ?? DEFAULTS.scale,
         rotation:         config.rotation         ?? DEFAULTS.rotation,
         phaseOffset:      config.phaseOffset      ?? DEFAULTS.phaseOffset,
         sweepSpeed:       config.sweepSpeed       ?? DEFAULTS.sweepSpeed,
@@ -70,27 +67,24 @@ export function createStrip(config = {}) {
     };
 
     // -------------------------------------------------------------------------
-    // Per-instance uniforms
-    // -------------------------------------------------------------------------
-    // Each strip owns a completely independent uniforms object.
-    // Mutating one strip's uniforms has zero effect on any other strip.
+    // Per-instance uniforms — completely independent per strip
     // -------------------------------------------------------------------------
     const uniforms = {
-        uTime:            { value: 0 },
-        uBaseColor:       { value: new THREE.Color(0.052, 0.052, 0.052) },
-        uLightColor:      { value: new THREE.Color("#EC044F") },
-        uLightPosition:   { value: cfg.sweepMin },
-        uLightWidth:      { value: 0.05 },
-        uLightIntensity:  { value: cfg.lightIntensity },
-        uColorIntensity:  { value: cfg.colorIntensity },
-        uEmissionStrength:{ value: cfg.emissionStrength },
-        uEnableEmission:  { value: 1.0 },
-        uMetalStrength:   { value: 1.0 },
-        uNoiseStrength:   { value: 0.4 },
+        uTime:             { value: 0 },
+        uBaseColor:        { value: new THREE.Color(0.052, 0.052, 0.052) },
+        uLightColor:       { value: new THREE.Color("#EC044F") },
+        uLightPosition:    { value: cfg.sweepMin },
+        uLightWidth:       { value: 0.05 },
+        uLightIntensity:   { value: cfg.lightIntensity },
+        uColorIntensity:   { value: cfg.colorIntensity },
+        uEmissionStrength: { value: cfg.emissionStrength },
+        uEnableEmission:   { value: 1.0 },
+        uMetalStrength:    { value: 1.0 },
+        uNoiseStrength:    { value: 0.4 },  // improved via 3-octave noise (Phase 7.5)
     };
 
     // -------------------------------------------------------------------------
-    // Material — references SHARED shader sources, owns independent uniforms
+    // Material — shared shader sources, independent uniforms
     // -------------------------------------------------------------------------
     const material = new THREE.ShaderMaterial({
         vertexShader:   VERTEX_SHADER,
@@ -101,46 +95,34 @@ export function createStrip(config = {}) {
     });
 
     // -------------------------------------------------------------------------
-    // Mesh — references SHARED_GEOMETRY
+    // Mesh — shared geometry, independent material + scale
     // -------------------------------------------------------------------------
     const mesh = new THREE.Mesh(SHARED_GEOMETRY, material);
-    mesh.position.copy(cfg.position);
+    mesh.position.set(
+        cfg.position.x ?? 0,
+        cfg.position.y ?? 0,
+        cfg.position.z ?? 0
+    );
+    mesh.scale.set(cfg.scale.x, cfg.scale.y, 1.0);
     mesh.rotation.z = cfg.rotation;
-    mesh.name = cfg.id;   // useful for scene inspection / debugging
+    mesh.name = cfg.id;
 
-    // -------------------------------------------------------------------------
-    // Animation state (private to this instance)
-    // -------------------------------------------------------------------------
-    // sweepSpeed is mutable — setLightSpeed() can change it after construction.
+    // Private mutable animation state
     let currentSweepSpeed = cfg.sweepSpeed;
 
     // -------------------------------------------------------------------------
-    // StripInstance public API
+    // Public API
     // -------------------------------------------------------------------------
 
-    /**
-     * update(t)
-     * Call every frame with wall-clock time in seconds.
-     * Computes uLightPosition from the phase-offset sawtooth and uploads
-     * uTime and uLightPosition to this strip's uniforms.
-     * No other code should write to this strip's uniforms each frame.
-     */
+    /** Call every frame with wall-clock seconds. Writes uTime + uLightPosition. */
     function update(t) {
-        // Apply phaseOffset to produce an independent starting phase.
-        // Adding a constant time offset shifts the sweep's starting position
-        // without affecting the sweep speed or loop period.
         const localT  = t + cfg.phaseOffset;
-        const sweep   = (localT * currentSweepSpeed) % 1.0;  // [0, 1) sawtooth
-
+        const sweep   = (localT * currentSweepSpeed) % 1.0;
         uniforms.uTime.value          = t;
         uniforms.uLightPosition.value = cfg.sweepMin + sweep * (cfg.sweepMax - cfg.sweepMin);
     }
 
-    /**
-     * setLightColor(color)
-     * Accepts a THREE.Color, a hex string, or a hex number.
-     * Updates this strip's uLightColor uniform immediately.
-     */
+    /** Set brand color — accepts THREE.Color, hex string, or hex number. */
     function setLightColor(color) {
         if (color instanceof THREE.Color) {
             uniforms.uLightColor.value.copy(color);
@@ -149,109 +131,190 @@ export function createStrip(config = {}) {
         }
     }
 
-    /**
-     * setEmission(value)
-     * Sets uEmissionStrength — controls HDR headroom fed to UnrealBloomPass.
-     * Range: 0.0 (no emission, bloom-free) → 2.0+ (strong HDR bloom).
-     */
+    /** Set HDR emission multiplier (0.0 → 2.0+). */
     function setEmission(value) {
         uniforms.uEmissionStrength.value = value;
     }
 
-    /**
-     * setColorIntensity(value)
-     * Sets uColorIntensity — controls the strength of the brand color fringe.
-     * Range: 0.0 (white only) → 1.0 (full color fringe).
-     */
+    /** Set brand-color fringe intensity (0.0 = white only → 1.0 = full color). */
     function setColorIntensity(value) {
         uniforms.uColorIntensity.value = value;
     }
 
-    /**
-     * setLightSpeed(value)
-     * Changes the sweep speed in cycles/second at runtime.
-     * Deterministic — the new speed takes effect on the next update() call.
-     */
+    /** Change sweep speed in cycles/second at runtime. */
     function setLightSpeed(value) {
         currentSweepSpeed = value;
     }
 
-    // Return the public StripInstance interface
-    return {
-        id:               cfg.id,
-        mesh,
-        update,
-        setLightColor,
-        setEmission,
-        setColorIntensity,
-        setLightSpeed,
-    };
+    return { id: cfg.id, mesh, update, setLightColor, setEmission, setColorIntensity, setLightSpeed };
 }
 
 // =============================================================================
-// buildStripSystem()
+// buildStripSystem()  — Phase 7 debug grid  (preserved)
 // =============================================================================
-// Convenience factory that creates six strip instances arranged in a 2×3
-// debug grid for visual inspection.
-//
-// Layout (world space, camera at z=8):
-//
-//   Strip 0 (top-left)      Strip 1 (top-right)
-//   Strip 2 (mid-left)      Strip 3 (mid-right)
-//   Strip 4 (bot-left)      Strip 5 (bot-right)
-//
-// Phase offsets are evenly distributed across one full cycle period so no
-// two strips have their light at the same position at any given moment.
+// Six strips in a 2×3 grid with evenly-distributed phase offsets.
+// Used for material and system validation — not the final hero layout.
 // =============================================================================
 export function buildStripSystem() {
     const STRIP_COUNT  = 6;
-    const SWEEP_SPEED  = 0.18;                      // cycles / second
-    const CYCLE_PERIOD = 1.0 / SWEEP_SPEED;         // ≈ 5.56 seconds
-    const PHASE_STEP   = CYCLE_PERIOD / STRIP_COUNT; // evenly-spaced offsets
+    const SWEEP_SPEED  = 0.18;
+    const CYCLE_PERIOD = 1.0 / SWEEP_SPEED;
+    const PHASE_STEP   = CYCLE_PERIOD / STRIP_COUNT;
 
-    // 2×3 grid layout
-    // Columns: left x = -2.6,  right x = +2.6
-    // Rows (top → bottom): y = +2.4, 0.0, -2.4
     const GRID = [
-        { col: 0, row: 0 },  // Strip 0 — top-left
-        { col: 1, row: 0 },  // Strip 1 — top-right
-        { col: 0, row: 1 },  // Strip 2 — mid-left
-        { col: 1, row: 1 },  // Strip 3 — mid-right
-        { col: 0, row: 2 },  // Strip 4 — bot-left
-        { col: 1, row: 2 },  // Strip 5 — bot-right
+        { col: 0, row: 0 }, { col: 1, row: 0 },
+        { col: 0, row: 1 }, { col: 1, row: 1 },
+        { col: 0, row: 2 }, { col: 1, row: 2 },
+    ];
+    const COL_X = [-2.6,  2.6];
+    const ROW_Y = [ 2.4,  0.0, -2.4];
+
+    return GRID.map(({ col, row }, i) =>
+        createStrip({
+            id:          `strip-${i}`,
+            position:    { x: COL_X[col], y: ROW_Y[row], z: 0 },
+            phaseOffset: i * PHASE_STEP,
+            sweepSpeed:  SWEEP_SPEED,
+        })
+    );
+}
+
+// =============================================================================
+// buildHeroComposition()  — Phase 8 final hero layout
+// =============================================================================
+// Six panels in an asymmetric diagonal composition.
+//
+// DESIGN PRINCIPLES
+// -----------------
+// • Strong size hierarchy: panels range from 2.4 to 5.6 world-units wide.
+// • Irregular vertical spacing — no two panels share the same Y gap.
+// • Lateral offset cascade — each panel steps further right as it descends,
+//   creating a diagonal flow that matches the π/4 strip rotation.
+// • Z depth layering: ±0.30 range creates natural overlap without z-fighting
+//   (depthWrite:false on all panels).
+// • Timing: phase offsets cover the full cycle; sweep speeds vary ±5%
+//   so the pattern evolves organically over ~30 seconds without appearing
+//   random at first glance.
+//
+// PANEL ROLES
+// -----------
+//  0  "hero"      — dominant, widest, highest position
+//  1  "accent"    — medium, steps right and down, slightly behind hero
+//  2  "wide"      — second-widest, anchors the middle band, pushed left
+//  3  "slim"      — narrowest, recedes far right and deep into Z
+//  4  "mid"       — medium-wide, lower-left, in front of the Z stack
+//  5  "tail"      — medium, lowest, steps right, closes the cascade
+//
+// PANEL DATA
+// ----------
+// position:  { x, y, z }   world-space centre
+// scale:     { x, y }      multiplied onto PlaneGeometry(4,1)
+//                          effective world size = (4·scaleX) × (1·scaleY)
+// phaseOffset: seconds     deterministic — no random() calls
+// sweepSpeed:  cycles/s    varies slightly to desynchronise over time
+//
+// All panels share rotation = Math.PI / 4
+// =============================================================================
+export function buildHeroComposition() {
+    // -----------------------------------------------------------------------
+    // Shared base speed — cycle period ≈ 5.56 s.
+    // Phase offsets are 1/6 of the cycle apart so at t=0 the six lights
+    // are evenly spread across the UV range (staggered, not bunched).
+    // -----------------------------------------------------------------------
+    const BASE_SPEED   = 0.18;
+    const CYCLE        = 1.0 / BASE_SPEED;   // ≈ 5.56 s
+    const SIXTH        = CYCLE / 6;           // ≈ 0.93 s
+
+    // -----------------------------------------------------------------------
+    // Hero panel definitions — edit only this array to change the composition
+    // -----------------------------------------------------------------------
+    const PANELS = [
+        // ---- Panel 0: hero ----
+        // Widest panel, sits high and slightly left of centre.
+        // Strongest emission — commands the top of the composition.
+        {
+            id:               'panel-hero',
+            position:         { x: -1.20, y:  2.80, z:  0.00 },
+            scale:            { x:  1.40, y:  0.55 },
+            phaseOffset:      0 * SIXTH,
+            sweepSpeed:       BASE_SPEED,
+            emissionStrength: 1.20,
+            colorIntensity:   0.52,
+            lightIntensity:   1.00,
+        },
+
+        // ---- Panel 1: accent ----
+        // Medium width, steps right and drops from the hero.
+        // Slightly behind (z=-0.12) so it reads as secondary depth.
+        {
+            id:               'panel-accent',
+            position:         { x:  1.80, y:  1.30, z: -0.12 },
+            scale:            { x:  0.90, y:  0.42 },
+            phaseOffset:      1 * SIXTH,
+            sweepSpeed:       BASE_SPEED * 0.96,
+            emissionStrength: 1.08,
+            colorIntensity:   0.42,
+            lightIntensity:   0.95,
+        },
+
+        // ---- Panel 2: wide ----
+        // Second-widest. Anchors the centre-left.
+        // Pushed furthest left and slightly forward in Z.
+        // Its extra width creates visual tension with the narrower panels
+        // on the right side of the composition.
+        {
+            id:               'panel-wide',
+            position:         { x: -2.60, y: -0.20, z:  0.08 },
+            scale:            { x:  1.30, y:  0.52 },
+            phaseOffset:      2 * SIXTH,
+            sweepSpeed:       BASE_SPEED * 1.05,
+            emissionStrength: 1.15,
+            colorIntensity:   0.48,
+            lightIntensity:   0.98,
+        },
+
+        // ---- Panel 3: slim ----
+        // Narrowest panel. Far right, low, pushed deep into Z (-0.28).
+        // Creates the strongest depth cue — the eye reads it as distant.
+        {
+            id:               'panel-slim',
+            position:         { x:  2.80, y: -0.95, z: -0.28 },
+            scale:            { x:  0.62, y:  0.34 },
+            phaseOffset:      3 * SIXTH,
+            sweepSpeed:       BASE_SPEED * 0.93,
+            emissionStrength: 0.95,
+            colorIntensity:   0.36,
+            lightIntensity:   0.88,
+        },
+
+        // ---- Panel 4: mid ----
+        // Medium-wide, lower-left band. Slightly in front of the Z stack.
+        // Bridges the visual gap between the wide anchor and the lower panels.
+        {
+            id:               'panel-mid',
+            position:         { x: -1.00, y: -2.20, z:  0.04 },
+            scale:            { x:  1.05, y:  0.46 },
+            phaseOffset:      4 * SIXTH,
+            sweepSpeed:       BASE_SPEED * 1.02,
+            emissionStrength: 1.10,
+            colorIntensity:   0.44,
+            lightIntensity:   0.96,
+        },
+
+        // ---- Panel 5: tail ----
+        // Closes the diagonal cascade. Steps right and drops to the bottom.
+        // Medium width — heavier than the slim panel, lighter than mid.
+        {
+            id:               'panel-tail',
+            position:         { x:  1.40, y: -3.30, z: -0.10 },
+            scale:            { x:  0.82, y:  0.40 },
+            phaseOffset:      5 * SIXTH,
+            sweepSpeed:       BASE_SPEED * 0.97,
+            emissionStrength: 1.00,
+            colorIntensity:   0.40,
+            lightIntensity:   0.92,
+        },
     ];
 
-    const COL_X = [-2.6, 2.6];   // X position per column
-    const ROW_Y = [ 2.4, 0.0, -2.4];   // Y position per row
-
-    // Vary emissionStrength and colorIntensity slightly across strips to
-    // visually confirm the per-instance uniform system is working.
-    // These are debug-layout values — Phase 8 will use final composition values.
-    const PER_STRIP_OVERRIDES = [
-        { emissionStrength: 1.1, colorIntensity: 0.45 },
-        { emissionStrength: 1.1, colorIntensity: 0.45 },
-        { emissionStrength: 1.1, colorIntensity: 0.45 },
-        { emissionStrength: 1.1, colorIntensity: 0.45 },
-        { emissionStrength: 1.1, colorIntensity: 0.45 },
-        { emissionStrength: 1.1, colorIntensity: 0.45 },
-    ];
-
-    const strips = [];
-
-    for (let i = 0; i < STRIP_COUNT; i++) {
-        const { col, row } = GRID[i];
-        const overrides    = PER_STRIP_OVERRIDES[i];
-
-        strips.push(createStrip({
-            id:               `strip-${i}`,
-            position:         new THREE.Vector3(COL_X[col], ROW_Y[row], 0),
-            rotation:         Math.PI / 4,
-            phaseOffset:      i * PHASE_STEP,        // deterministic, evenly-spaced
-            sweepSpeed:       SWEEP_SPEED,
-            emissionStrength: overrides.emissionStrength,
-            colorIntensity:   overrides.colorIntensity,
-        }));
-    }
-
-    return strips;
+    return PANELS.map(cfg => createStrip({ ...cfg, rotation: Math.PI / 4 }));
 }

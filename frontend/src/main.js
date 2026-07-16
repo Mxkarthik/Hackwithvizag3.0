@@ -4,27 +4,25 @@ import { EffectComposer }  from "three/examples/jsm/postprocessing/EffectCompose
 import { RenderPass }      from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass }      from "three/examples/jsm/postprocessing/OutputPass.js";
-import { buildStripSystem } from "./objects/Strip.js";
+import { buildHeroComposition } from "./objects/Strip.js";
 
 // ---------------------------------------------------------------------------
 // Scene
 // ---------------------------------------------------------------------------
 const scene = new THREE.Scene();
 
-// Camera pulled back to z=8 — the 2×3 grid spans ±2.6 X and ±2.4 Y,
-// which fits comfortably in a 45° FOV frustum at this distance.
+// Camera at z=9 — the hero composition spans y ≈ +3.3 to y ≈ -3.8,
+// fitting comfortably within the 7.46-unit frustum height at this distance.
 const camera = new THREE.PerspectiveCamera(
     45,
     window.innerWidth / window.innerHeight,
     0.1,
     100
 );
-camera.position.z = 8;
+camera.position.z = 9;
 
 // ---------------------------------------------------------------------------
 // Renderer
-// ---------------------------------------------------------------------------
-// ACESFilmicToneMapping and toneMappingExposure are consumed by OutputPass.
 // ---------------------------------------------------------------------------
 const renderer = new THREE.WebGLRenderer({
     canvas: document.querySelector("#bg"),
@@ -37,13 +35,14 @@ renderer.toneMapping         = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.9;
 
 // ---------------------------------------------------------------------------
-// Strip System — six independent instances, 2×3 debug grid
+// Hero composition — six asymmetric panels
 // ---------------------------------------------------------------------------
-// buildStripSystem() returns Array<StripInstance>.
+// buildHeroComposition() returns Array<StripInstance>.
 // Each instance owns its own ShaderMaterial and uniforms.
 // All instances share one PlaneGeometry and one compiled GPU shader program.
+// Panel sizing is applied via mesh.scale — no geometry duplication.
 // ---------------------------------------------------------------------------
-const strips = buildStripSystem();
+const strips = buildHeroComposition();
 strips.forEach(strip => scene.add(strip.mesh));
 
 // ---------------------------------------------------------------------------
@@ -56,8 +55,6 @@ const renderTarget = new THREE.WebGLRenderTarget(
 );
 
 const composer = new EffectComposer(renderer, renderTarget);
-
-// Pass 1 — RenderPass: renders all six strips into the HDR buffer.
 composer.addPass(new RenderPass(scene, camera));
 
 // ---------------------------------------------------------------------------
@@ -67,7 +64,6 @@ const BLOOM_THRESHOLD = 0.90;
 const BLOOM_STRENGTH  = 0.18;
 const BLOOM_RADIUS    = 0.35;
 
-// Pass 2 — UnrealBloomPass
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
     BLOOM_STRENGTH,
@@ -75,26 +71,17 @@ const bloomPass = new UnrealBloomPass(
     BLOOM_THRESHOLD
 );
 composer.addPass(bloomPass);
-
-// Pass 3 — OutputPass: ACESFilmic tone mapping + linear → sRGB.
 composer.addPass(new OutputPass());
 
 // ---------------------------------------------------------------------------
 // Animation loop
 // ---------------------------------------------------------------------------
-// main.js responsibilities here are minimal and deliberate:
-//   1. Convert timeMs to seconds.
-//   2. Call strip.update(t) for every strip — all uniform writes happen there.
-//   3. Call composer.render().
-//
-// main.js does NOT manipulate any uniforms directly.
+// main.js only: converts timestamp, calls update on each strip, renders.
+// All uniform writes are delegated to StripInstance.update(t).
 // ---------------------------------------------------------------------------
 renderer.setAnimationLoop((timeMs) => {
     const t = timeMs * 0.001;
-
-    // Delegate all animation state to each strip instance.
     strips.forEach(strip => strip.update(t));
-
     composer.render();
 });
 
@@ -102,8 +89,8 @@ renderer.setAnimationLoop((timeMs) => {
 // Resize handler
 // ---------------------------------------------------------------------------
 window.addEventListener("resize", () => {
-    const w  = window.innerWidth;
-    const h  = window.innerHeight;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
 
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
