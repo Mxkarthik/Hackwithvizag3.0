@@ -4,8 +4,9 @@ varying vec2 vUv;
 uniform float uTime;
 uniform vec3 uBaseColor;
 uniform vec3 uLightColor;
-uniform float uLightPosition;
-uniform float uLightWidth;
+uniform float uLightPosition;   // Owned and animated by JavaScript — do NOT derive in shader
+uniform float uLightWidth;      // Standard deviation (σ) of the horizontal Gaussian lobe
+uniform float uLightIntensity;  // Peak brightness of the sweep — animated in Phase 5
 uniform float uMetalStrength;
 uniform float uNoiseStrength;
 
@@ -129,12 +130,60 @@ void main() {
     // uNoiseStrength scales the raw noise output so the intensity can be
     // tuned from JS without touching the shader.
     //
-    // IMPORTANT: surfaceVariation is intentionally NOT applied to any
-    // visual output here. It is computed and held in a local variable,
-    // ready to be consumed by the moving-light calculations in Phase 4.
-    // Modifying color, brightness, reflection, or gradients with it now
-    // would contaminate Phase 4's physically-correct light interaction.
+    // surfaceVariation is consumed by Layer 7 to modulate the light sweep.
     float surfaceVariation = getSurfaceVariation(vUv) * uNoiseStrength;
+
+    // -----------------------------------------------------------------
+    // LAYER 7: Procedural Light Sweep  (Phase 4)
+    // -----------------------------------------------------------------
+    // A physically-inspired Gaussian illumination mask that moves across
+    // the strip. The sweep position is entirely owned by JavaScript —
+    // uLightPosition is computed and uploaded every frame from main.js.
+    // The shader is responsible only for rendering the mask.
+    //
+    // Structure:
+    //   A. Horizontal Gaussian — the core specular lobe shape.
+    //   B. Vertical Gaussian  — simulates light wrapping over strip curvature.
+    //   C. Roughness modulation — surfaceVariation attenuates the lobe
+    //      where micro-facets scatter the light (high roughness = lower peak).
+    //   D. Additive composite — light is added on top of finalColor so it
+    //      is not double-attenuated by the edge falloff applied in Layer 5.
+
+    // Named constants — no magic numbers.
+    // σ for the horizontal lobe is uLightWidth (tunable uniform).
+    // σ for the vertical attenuation is fixed; describes strip curvature.
+    const float VERTICAL_SIGMA        = 0.35;  // vertical Gaussian std-deviation
+    const float ROUGHNESS_MODULATION  = 0.30;  // max fractional attenuation from roughness
+
+    // A. Horizontal Gaussian lobe
+    //    exp( -x² / 2σ² )  evaluated at the signed distance from the light centre.
+    float hDist       = vUv.x - uLightPosition;
+    float hVariance   = 2.0 * uLightWidth * uLightWidth;    // 2σ²
+    float hGaussian   = exp(-(hDist * hDist) / hVariance);
+
+    // B. Vertical Gaussian attenuation
+    //    Centred at vUv.y = 0.5 (mid-height of the strip).
+    //    Makes the highlight brightest at the centre and subtly dimmer at
+    //    the top/bottom edges, approximating light wrap on a curved surface.
+    float vDist       = vUv.y - 0.5;
+    float vVariance   = 2.0 * VERTICAL_SIGMA * VERTICAL_SIGMA;  // 2σ²
+    float vGaussian   = exp(-(vDist * vDist) / vVariance);
+
+    // C. Roughness modulation
+    //    surfaceVariation ∈ [0, uNoiseStrength]. High roughness scatters
+    //    incoming light, reducing the apparent specular peak at that point.
+    float roughnessMod = 1.0 - surfaceVariation * ROUGHNESS_MODULATION;
+
+    // D. Composite light contribution
+    //    uLightIntensity controls peak brightness — kept as a uniform so
+    //    Phase 5 can animate it (fade in/out, pulse, etc.) from JavaScript.
+    //    Light color is vec3(1.0) (white) in Phase 4.
+    //    uLightColor (pink) is wired up in Phase 5.
+    float lightMask        = hGaussian * vGaussian * roughnessMod;
+    vec3  lightContribution = vec3(lightMask) * uLightIntensity;
+
+    // Add the light on top of the fully composited base material.
+    finalColor += lightContribution;
 
     // Clamp the final color to prevent any clipping/harsh highlights and keep it premium.
     gl_FragColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);

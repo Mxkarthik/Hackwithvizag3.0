@@ -32,7 +32,10 @@ export default function createStrip() {
             value: 0.0
         },
         uLightWidth: {
-            value: 0.2
+            value: 0.08          // σ of the horizontal Gaussian lobe
+        },
+        uLightIntensity: {
+            value: 1.0           // peak brightness — animated in Phase 5
         },
         uMetalStrength: {
             value: 1.0
