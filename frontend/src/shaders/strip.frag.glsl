@@ -9,6 +9,67 @@ uniform float uLightWidth;
 uniform float uMetalStrength;
 uniform float uNoiseStrength;
 
+// =============================================================================
+// HELPER: getSurfaceVariation
+// =============================================================================
+// Generates a deterministic procedural surface variation value in [0, 1].
+// This simulates a microscopic roughness map for anisotropic brushed metal.
+//
+// Pipeline:
+//   1. hash2() — deterministic 2D → float hash via dot-product scrambling.
+//      Produces a unique pseudo-random value for each integer lattice cell.
+//
+//   2. Hermite interpolation (smoothstep curve: 3t² - 2t³) applied to the
+//      fractional position within each cell. This removes the visible grid
+//      discontinuity that plain linear interpolation would produce.
+//
+//   3. Value Noise via bilinear interpolation of the four surrounding
+//      lattice corner hashes, blended with the Hermite weights.
+//      Value Noise is chosen over Perlin/Simplex because:
+//        • It is cheaper (no gradient table needed).
+//        • Its output is purely scalar, matching a roughness map convention.
+//        • The result is smooth, band-limited, and artifact-free.
+//
+//   4. Anisotropic UV stretch: uv * vec2(8.0, 64.0) makes the noise cells
+//      narrow horizontally and long vertically, replicating the directional
+//      grain pattern of machined brushed metal.
+// =============================================================================
+
+// Deterministic 2D hash: maps a vec2 lattice coordinate to a float in [0, 1].
+// The magic constants are chosen to break spatial coherence without trig calls.
+float hash2(vec2 p) {
+    p = fract(p * vec2(127.1, 311.7));
+    p += dot(p, p.yx + 19.19);
+    return fract(p.x * p.y);
+}
+
+// Value Noise with Hermite interpolation over a stretched anisotropic UV space.
+float getSurfaceVariation(vec2 uv) {
+    // Anisotropic stretch: narrow horizontal cells, long vertical cells.
+    // Simulates the directional micro-grain of brushed / machined metal.
+    const vec2 ANISO_SCALE = vec2(8.0, 64.0);
+    vec2 st = uv * ANISO_SCALE;
+
+    // Separate integer cell coordinate from fractional position within cell.
+    vec2 i = floor(st);
+    vec2 f = fract(st);
+
+    // Hermite smoothing curve (smoothstep: 3t² - 2t³).
+    // Removes C0 discontinuities at cell boundaries that bilinear alone produces.
+    vec2 u = f * f * (3.0 - 2.0 * f);
+
+    // Sample the four surrounding lattice corners.
+    float a = hash2(i + vec2(0.0, 0.0));
+    float b = hash2(i + vec2(1.0, 0.0));
+    float c = hash2(i + vec2(0.0, 1.0));
+    float d = hash2(i + vec2(1.0, 1.0));
+
+    // Bilinear interpolation using the Hermite weights.
+    // mix(a, b, u.x) interpolates along X, then the two results are
+    // interpolated along Y — standard 2D bilinear on a unit cell.
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
 void main() {
     // -----------------------------------------------------------------
     // LAYER 1: Dark Base Color
@@ -58,6 +119,22 @@ void main() {
     // and then apply the edge falloff.
     vec3 blendedColor = baseColor + verticalDepth + metallicReflection;
     vec3 finalColor = blendedColor * edgeFalloff;
+
+    // -----------------------------------------------------------------
+    // LAYER 6: Procedural Surface Variation  (Phase 3 — data only)
+    // -----------------------------------------------------------------
+    // Generates a scalar roughness-like value derived from Value Noise
+    // over an anisotropic UV space that mimics brushed-metal micro-grain.
+    //
+    // uNoiseStrength scales the raw noise output so the intensity can be
+    // tuned from JS without touching the shader.
+    //
+    // IMPORTANT: surfaceVariation is intentionally NOT applied to any
+    // visual output here. It is computed and held in a local variable,
+    // ready to be consumed by the moving-light calculations in Phase 4.
+    // Modifying color, brightness, reflection, or gradients with it now
+    // would contaminate Phase 4's physically-correct light interaction.
+    float surfaceVariation = getSurfaceVariation(vUv) * uNoiseStrength;
 
     // Clamp the final color to prevent any clipping/harsh highlights and keep it premium.
     gl_FragColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);

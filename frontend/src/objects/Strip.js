@@ -38,7 +38,7 @@ export default function createStrip() {
             value: 1.0
         },
         uNoiseStrength: {
-            value: 0.0
+            value: 0.4
         }
     };
 
