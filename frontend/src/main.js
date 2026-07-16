@@ -34,7 +34,7 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.toneMapping         = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 0.9;  // slight reduction from 1.0 — compensates for lower uEmissionStrength
 
 // ---------------------------------------------------------------------------
 // Strip mesh
@@ -66,18 +66,19 @@ composer.addPass(new RenderPass(scene, camera));
 // Bloom configuration — named constants for easy future tuning / animation.
 //
 // BLOOM_THRESHOLD  Pixels below this luminance do not contribute to bloom.
-//                  Set above the base material (~0.052) and static metallic
-//                  reflection (~0.067) so only the active light blooms.
+//                  Raised to 0.90 — only the brightest highlight pixels bloom.
+//                  Dark base (~0.052) and static reflection (~0.067) are unaffected.
 //
-// BLOOM_STRENGTH   Overall bloom intensity. Low value for a premium, subtle
-//                  result. Raise toward 1.0+ for a more dramatic effect.
+// BLOOM_STRENGTH   Reduced to 0.18 — bloom supports the reflection, does not dominate.
+//                  At uEmissionStrength=1.1 the HDR headroom above threshold is ~0.20.
+//                  A strength of 0.18 produces a delicate glow, not a halo.
 //
-// BLOOM_RADIUS     Spatial spread of the bloom. Higher = wider, softer bleed.
-//                  0.6 gives a narrow, cinematic halo suitable for a thin strip.
+// BLOOM_RADIUS     Reduced to 0.35 — bloom stays close to the highlight edge.
+//                  No large soft halo. Bleed is contained to ~10–15px at 1080p.
 // ---------------------------------------------------------------------------
-const BLOOM_THRESHOLD = 0.85;
-const BLOOM_STRENGTH  = 0.4;
-const BLOOM_RADIUS    = 0.6;
+const BLOOM_THRESHOLD = 0.90;
+const BLOOM_STRENGTH  = 0.18;
+const BLOOM_RADIUS    = 0.35;
 
 // Pass 2 — UnrealBloomPass
 // Extracts pixels above BLOOM_THRESHOLD, blurs them via a dual Kawase

@@ -1,11 +1,22 @@
 varying vec2 vUv;
 
+// =============================================================================
+// UV ORIENTATION NOTE
+// =============================================================================
+// PlaneGeometry(width=4, height=1) maps:
+//   U (vUv.x)  →  strip long axis   (width  = 4 units)
+//   V (vUv.y)  →  strip short axis  (height = 1 unit)
+//
+// All anisotropic effects (grain, specular streaks, reflections) are
+// elongated along U and compressed along V.
+// =============================================================================
+
 // Future-compatible uniforms for the next phases
 uniform float uTime;
 uniform vec3 uBaseColor;
 uniform vec3 uLightColor;       // Brand color applied as the wider colored fringe (Phase 5)
 uniform float uLightPosition;   // Owned and animated by JavaScript — do NOT derive in shader
-uniform float uLightWidth;      // Standard deviation (σ) of the horizontal Gaussian lobe
+uniform float uLightWidth;      // σ_U of the horizontal (long-axis) Gaussian lobe
 uniform float uLightIntensity;  // Peak brightness of the white lobe
 uniform float uColorIntensity;  // Relative strength of the colored lobe vs. the white lobe
 uniform float uEmissionStrength; // HDR multiplier for light layers — feeds UnrealBloomPass (Phase 6)
@@ -14,232 +25,221 @@ uniform float uMetalStrength;
 uniform float uNoiseStrength;
 
 // =============================================================================
-// HELPER: getSurfaceVariation
+// HELPER: getSurfaceVariation  (Phase 6.5 — two-octave anisotropic noise)
 // =============================================================================
 // Generates a deterministic procedural surface variation value in [0, 1].
-// This simulates a microscopic roughness map for anisotropic brushed metal.
+// Simulates the microscopic roughness of brushed / anodized aluminium.
 //
-// Pipeline:
-//   1. hash2() — deterministic 2D → float hash via dot-product scrambling.
-//      Produces a unique pseudo-random value for each integer lattice cell.
+// UV orientation: U = long axis, V = short axis.
+// Grain runs along U → many fine cells along U, few tall cells along V.
 //
-//   2. Hermite interpolation (smoothstep curve: 3t² - 2t³) applied to the
-//      fractional position within each cell. This removes the visible grid
-//      discontinuity that plain linear interpolation would produce.
+// Two-octave Value Noise:
+//   Octave 1 — ANISO_SCALE_1 = vec2(128.0, 32.0)
+//              128 cells along U (fine grain), 32 along V (tall strands)
+//              Weight 0.7 — dominant structural layer
+//   Octave 2 — ANISO_SCALE_2 = vec2(256.0, 64.0)
+//              Very fine micro-detail on top of octave 1
+//              Weight 0.3 — detail layer
 //
-//   3. Value Noise via bilinear interpolation of the four surrounding
-//      lattice corner hashes, blended with the Hermite weights.
-//      Value Noise is chosen over Perlin/Simplex because:
-//        • It is cheaper (no gradient table needed).
-//        • Its output is purely scalar, matching a roughness map convention.
-//        • The result is smooth, band-limited, and artifact-free.
+// Why two octaves instead of one:
+//   A single octave at this density produces a repeating moire pattern.
+//   A second octave at 2× frequency breaks the periodicity while adding
+//   fine micro-detail. The sum is smooth, band-limited, and pattern-free.
 //
-//   4. Anisotropic UV stretch: uv * vec2(8.0, 64.0) makes the noise cells
-//      narrow horizontally and long vertically, replicating the directional
-//      grain pattern of machined brushed metal.
+// Why Value Noise over Perlin/Simplex:
+//   The output is a scalar roughness value, not a directional gradient.
+//   Value Noise maps directly to a roughness convention and is cheaper.
 // =============================================================================
 
 // Deterministic 2D hash: maps a vec2 lattice coordinate to a float in [0, 1].
-// The magic constants are chosen to break spatial coherence without trig calls.
 float hash2(vec2 p) {
     p = fract(p * vec2(127.1, 311.7));
     p += dot(p, p.yx + 19.19);
     return fract(p.x * p.y);
 }
 
-// Value Noise with Hermite interpolation over a stretched anisotropic UV space.
-float getSurfaceVariation(vec2 uv) {
-    // Anisotropic stretch: narrow horizontal cells, long vertical cells.
-    // Simulates the directional micro-grain of brushed / machined metal.
-    const vec2 ANISO_SCALE = vec2(8.0, 64.0);
-    vec2 st = uv * ANISO_SCALE;
-
-    // Separate integer cell coordinate from fractional position within cell.
+// Single-octave Value Noise with Hermite interpolation.
+float valueNoise(vec2 st) {
     vec2 i = floor(st);
     vec2 f = fract(st);
+    vec2 u = f * f * (3.0 - 2.0 * f);   // Hermite smoothstep: 3t² - 2t³
 
-    // Hermite smoothing curve (smoothstep: 3t² - 2t³).
-    // Removes C0 discontinuities at cell boundaries that bilinear alone produces.
-    vec2 u = f * f * (3.0 - 2.0 * f);
-
-    // Sample the four surrounding lattice corners.
     float a = hash2(i + vec2(0.0, 0.0));
     float b = hash2(i + vec2(1.0, 0.0));
     float c = hash2(i + vec2(0.0, 1.0));
     float d = hash2(i + vec2(1.0, 1.0));
 
-    // Bilinear interpolation using the Hermite weights.
-    // mix(a, b, u.x) interpolates along X, then the two results are
-    // interpolated along Y — standard 2D bilinear on a unit cell.
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float getSurfaceVariation(vec2 uv) {
+    // Grain runs along U (long axis). Many fine cells along U, tall strands along V.
+    const vec2 ANISO_SCALE_1 = vec2(128.0, 32.0);  // octave 1 — structural layer
+    const vec2 ANISO_SCALE_2 = vec2(256.0, 64.0);  // octave 2 — micro-detail layer
+
+    float o1 = valueNoise(uv * ANISO_SCALE_1);
+    float o2 = valueNoise(uv * ANISO_SCALE_2);
+
+    // Weighted sum — octave 1 dominates, octave 2 adds fine detail.
+    return o1 * 0.7 + o2 * 0.3;
 }
 
 void main() {
     // -----------------------------------------------------------------
     // LAYER 1: Dark Base Color
     // -----------------------------------------------------------------
-    // We use the uBaseColor uniform which is configured at vec3(0.052)
-    // to provide a premium, almost-black base that remains within
-    // the target range of 0.045 to 0.060.
+    // vec3(0.052) — premium almost-black base within the [0.045, 0.060] target.
     vec3 baseColor = uBaseColor;
 
     // -----------------------------------------------------------------
     // LAYER 2: Vertical Depth
     // -----------------------------------------------------------------
-    // A very subtle vertical gradient to create three-dimensional depth.
-    // We smoothly interpolate (mix) from bottom to top using vUv.y.
-    // The top is only slightly brighter than the bottom (max addition of 0.006).
+    // Subtle V-axis gradient (bottom → top) for three-dimensional depth.
+    // Max addition of 0.006 — imperceptible individually, cumulative with other layers.
     float verticalGradientFactor = vUv.y;
     vec3 bottomOffset = vec3(0.0);
-    vec3 topOffset = vec3(0.006);
+    vec3 topOffset    = vec3(0.006);
     vec3 verticalDepth = mix(bottomOffset, topOffset, verticalGradientFactor);
 
     // -----------------------------------------------------------------
-    // LAYER 3: Gaussian Metallic Reflection
+    // LAYER 3: Anisotropic Static Metallic Reflection  (Phase 6.5 refined)
     // -----------------------------------------------------------------
-    // Simulates a soft, cylindrical metallic reflection.
-    // We use a Gaussian-style bell curve: exp(-k * x^2) centered at vUv.x = 0.5.
-    // High k value (12.0) defines a diffused metallic reflection band in the center.
-    // We scale it down to 0.015 to prevent sharp reflections and keep it soft.
-    float distFromCenter = vUv.x - 0.5;
-    float k = 12.0;
-    float gaussianReflection = exp(-k * distFromCenter * distFromCenter);
-    vec3 metallicReflection = vec3(gaussianReflection * 0.015 * uMetalStrength);
+    // Models the ambient environment reflection on brushed anodized aluminium.
+    // On anisotropic metal the ambient reflection is:
+    //   • Wide along the grain (U axis, long axis) — σ_U = 0.18
+    //   • Very tight across the grain (V axis, short axis) — σ_V = 0.08
+    //
+    // This produces a thin horizontal streak centred at V=0.5, spanning
+    // most of the strip's length — matching the reference appearance.
+    //
+    // Previous model: single 1D Gaussian along U only (no V compression).
+    // That produced a uniform band equal brightness top-to-bottom.
+    // The 2D anisotropic model compresses the band to a realistic streak.
+    //
+    // Aspect ratio: σ_U / σ_V = 0.18 / 0.08 = 2.25:1  (elliptical, horizontal)
+
+    const float STATIC_SIGMA_U = 0.18;  // wide along U (long axis / grain direction)
+    const float STATIC_SIGMA_V = 0.08;  // tight along V (short axis / cross-grain)
+    const float STATIC_PEAK    = 0.012; // peak brightness — slightly reduced for subtlety
+
+    float staticDistU  = vUv.x - 0.5;
+    float staticDistV  = vUv.y - 0.5;
+    float staticGaussU = exp(-(staticDistU * staticDistU) / (2.0 * STATIC_SIGMA_U * STATIC_SIGMA_U));
+    float staticGaussV = exp(-(staticDistV * staticDistV) / (2.0 * STATIC_SIGMA_V * STATIC_SIGMA_V));
+    vec3 metallicReflection = vec3(staticGaussU * staticGaussV * STATIC_PEAK * uMetalStrength);
 
     // -----------------------------------------------------------------
     // LAYER 4: Edge Falloff
     // -----------------------------------------------------------------
-    // To remove the flat, uniform appearance of a 2D rectangle, we darken
-    // the left and right edges.
-    // We use smoothstep to smoothly fade out the edges near x=0.0 and x=1.0.
-    float leftEdge = smoothstep(0.0, 0.15, vUv.x);
-    float rightEdge = smoothstep(1.0, 0.85, vUv.x);
+    // Darkens left and right edges (U axis extremes) for 3D curvature.
+    float leftEdge   = smoothstep(0.0, 0.15, vUv.x);
+    float rightEdge  = smoothstep(1.0, 0.85, vUv.x);
     float edgeFalloff = leftEdge * rightEdge;
 
     // -----------------------------------------------------------------
     // LAYER 5: Soft Tonal Adjustment
     // -----------------------------------------------------------------
-    // We combine the base color, vertical depth, and metallic reflection,
-    // and then apply the edge falloff.
-    // Stored as baseMaterial — the pre-light surface appearance.
-    // Kept separate from light contributions so Layer 9 can combine
-    // them with independent HDR scaling.
-    vec3 blendedColor  = baseColor + verticalDepth + metallicReflection;
-    vec3 baseMaterial  = blendedColor * edgeFalloff;
+    // Combines Layers 1–4 into baseMaterial — stored independently
+    // so Layer 9 can apply HDR scaling only to the light contributions.
+    vec3 blendedColor = baseColor + verticalDepth + metallicReflection;
+    vec3 baseMaterial = blendedColor * edgeFalloff;
 
     // -----------------------------------------------------------------
-    // LAYER 6: Procedural Surface Variation  (Phase 3 — data only)
+    // LAYER 6: Procedural Surface Variation  (Phase 6.5 refined)
     // -----------------------------------------------------------------
-    // Generates a scalar roughness-like value derived from Value Noise
-    // over an anisotropic UV space that mimics brushed-metal micro-grain.
+    // Two-octave Value Noise over anisotropic UV space.
+    // Grain aligned along U (long axis). Output in [0, 1].
     //
-    // uNoiseStrength scales the raw noise output so the intensity can be
-    // tuned from JS without touching the shader.
-    //
-    // surfaceVariation is consumed by Layer 7 to modulate the light sweep.
+    // Modulation depth reduced from 0.30 → 0.12.
+    // Fine brushed aluminium shows implied grain, not visible grain.
+    // The 12% variation is below the perceptual threshold as standalone
+    // texture but introduces subtle roughness-based light attenuation.
     float surfaceVariation = getSurfaceVariation(vUv) * uNoiseStrength;
 
     // -----------------------------------------------------------------
-    // LAYER 7: Procedural Light Sweep  (Phase 4)
+    // LAYER 7: Anisotropic Specular Sweep  (Phase 6.5 refined)
     // -----------------------------------------------------------------
-    // A physically-inspired Gaussian illumination mask that moves across
-    // the strip. The sweep position is entirely owned by JavaScript —
-    // uLightPosition is computed and uploaded every frame from main.js.
-    // The shader is responsible only for rendering the mask.
+    // UV orientation: U = long axis, V = short axis.
     //
-    // Structure:
-    //   A. Horizontal Gaussian — the core specular lobe shape.
-    //   B. Vertical Gaussian  — simulates light wrapping over strip curvature.
-    //   C. Roughness modulation — surfaceVariation attenuates the lobe
-    //      where micro-facets scatter the light (high roughness = lower peak).
-    //   D. lightContribution stored independently for Layer 9 composition.
+    // The specular streak on brushed metal is:
+    //   • Elongated along the grain (U axis) — σ_U is wide (= uLightWidth)
+    //   • Compressed across the grain (V axis) — σ_V is very tight
+    //
+    // uLightPosition sweeps along U (vUv.x). The highlight moves across
+    // the long axis, and the streak extends along that same long axis.
+    //
+    // Previous σ_V = 0.35 — too tall, produced a nearly circular/oval spot.
+    // Refined σ_V = 0.05 — very tight across V, producing a long thin streak.
+    // Refined σ_U = uLightWidth = 0.05 — tighter peak (was 0.08).
+    //
+    // Aspect ratio at these σ values: σ_V_streak / σ_U_peak = ?
+    // Wait — the streak IS the U dimension. The light sweeps along U.
+    // The tightness of the sweep is σ_U. The height of the streak is σ_V.
+    // Streak height (V) / sweep width (U) = 0.5 / 0.05 = 10:1 elongation
+    // along V relative to the sweep cross-section width.
+    // This means the streak is tall (spans V) but narrow (tight in U at any moment).
 
-    // Named constants — no magic numbers.
-    // σ for the horizontal lobe is uLightWidth (tunable uniform).
-    // σ for the vertical attenuation is fixed; describes strip curvature.
-    const float VERTICAL_SIGMA        = 0.35;  // vertical Gaussian std-deviation
-    const float ROUGHNESS_MODULATION  = 0.30;  // max fractional attenuation from roughness
+    const float SWEEP_SIGMA_V      = 0.50;  // streak height along V (short axis)
+    const float ROUGHNESS_MODULATION = 0.12; // max light attenuation from surface roughness
 
-    // A. Horizontal Gaussian lobe
-    //    exp( -x² / 2σ² )  evaluated at the signed distance from the light centre.
-    float hDist       = vUv.x - uLightPosition;
-    float hVariance   = 2.0 * uLightWidth * uLightWidth;    // 2σ²
-    float hGaussian   = exp(-(hDist * hDist) / hVariance);
+    // Distance from light centre along U (sweep axis).
+    float hDist     = vUv.x - uLightPosition;
+    float hVariance = 2.0 * uLightWidth * uLightWidth;   // 2σ_U²
+    float hGaussian = exp(-(hDist * hDist) / hVariance);
 
-    // B. Vertical Gaussian attenuation
-    //    Centred at vUv.y = 0.5 (mid-height of the strip).
-    //    Makes the highlight brightest at the centre and subtly dimmer at
-    //    the top/bottom edges, approximating light wrap on a curved surface.
-    float vDist       = vUv.y - 0.5;
-    float vVariance   = 2.0 * VERTICAL_SIGMA * VERTICAL_SIGMA;  // 2σ²
-    float vGaussian   = exp(-(vDist * vDist) / vVariance);
+    // Attenuation along V (cross-sweep axis) — tight to form a streak.
+    float vDist     = vUv.y - 0.5;
+    float vVariance = 2.0 * SWEEP_SIGMA_V * SWEEP_SIGMA_V;  // 2σ_V²
+    float vGaussian = exp(-(vDist * vDist) / vVariance);
 
-    // C. Roughness modulation
-    //    surfaceVariation ∈ [0, uNoiseStrength]. High roughness scatters
-    //    incoming light, reducing the apparent specular peak at that point.
+    // Roughness modulation — surface grain attenuates specular peak.
     float roughnessMod = 1.0 - surfaceVariation * ROUGHNESS_MODULATION;
 
-    // D. White light contribution — stored independently for Layer 9.
-    float lightMask          = hGaussian * vGaussian * roughnessMod;
-    vec3  lightContribution  = vec3(lightMask) * uLightIntensity;
+    // White light contribution — stored independently for Layer 9.
+    float lightMask         = hGaussian * vGaussian * roughnessMod;
+    vec3  lightContribution = vec3(lightMask) * uLightIntensity;
 
     // -----------------------------------------------------------------
-    // LAYER 8: Colored Illumination  (Phase 5)
+    // LAYER 8: Anisotropic Colored Illumination  (Phase 6.5 refined)
     // -----------------------------------------------------------------
-    // A second, wider Gaussian lobe at the same position as the white
-    // lobe. Because it is broader, it dominates at the edges of the
-    // highlight while the narrow white lobe dominates at the centre.
+    // Colored lobe is wider than the white lobe along U (sweep axis)
+    // to produce the white-core / color-fringe effect.
+    // Vertical spread kept close to the white lobe — color stays in
+    // the streak, does not bleed into a color oval.
     //
-    // Result: white core → brand color fringe, with no manual transitions.
-    // The effect emerges purely from the two-lobe width difference.
-    //
-    // Shares uLightPosition, vGaussian, roughnessMod, and hDist with
-    // Layer 7 — no redundant calculations.
-    //
-    // colorContribution stored independently for Layer 9 composition.
+    // Previous COLOR_SPREAD_FACTOR = 2.5 → σ_color_U = 0.20 (too wide, blob-like).
+    // Refined  COLOR_SPREAD_FACTOR_U = 1.6 → σ_color_U = 0.08 (tight fringe).
+    // Vertical spread factor = 1.1 → σ_color_V ≈ 0.55 (barely wider than streak).
 
-    const float COLOR_SPREAD_FACTOR = 2.5;  // colored lobe is 2.5× wider than white
+    const float COLOR_SPREAD_U = 1.6;  // colored lobe is 1.6× wider than white along U
+    const float COLOR_SPREAD_V = 1.1;  // barely taller than white along V
 
-    // Wider horizontal Gaussian using the same centre (hDist) already computed above.
-    float hSigmaColor    = uLightWidth * COLOR_SPREAD_FACTOR;
-    float hVarianceColor = 2.0 * hSigmaColor * hSigmaColor;         // 2σ²
+    float hSigmaColor    = uLightWidth * COLOR_SPREAD_U;
+    float hVarianceColor = 2.0 * hSigmaColor * hSigmaColor;
     float hGaussianColor = exp(-(hDist * hDist) / hVarianceColor);
 
-    // Reuse vGaussian and roughnessMod from Layer 7 — same physics apply.
-    float colorMask          = hGaussianColor * vGaussian * roughnessMod;
-    vec3  colorContribution  = uLightColor * colorMask * uColorIntensity;
+    float vSigmaColor    = SWEEP_SIGMA_V * COLOR_SPREAD_V;
+    float vVarianceColor = 2.0 * vSigmaColor * vSigmaColor;
+    float vGaussianColor = exp(-(vDist * vDist) / vVarianceColor);
+
+    float colorMask         = hGaussianColor * vGaussianColor * roughnessMod;
+    vec3  colorContribution = uLightColor * colorMask * uColorIntensity;
 
     // -----------------------------------------------------------------
-    // LAYER 9: HDR Emission & Composition  (Phase 6)
+    // LAYER 9: HDR Emission & Composition  (Phase 6 — unchanged)
     // -----------------------------------------------------------------
-    // Combines baseMaterial, lightContribution, and colorContribution
-    // with independent HDR scaling on the light layers only.
+    // baseMaterial is never HDR-scaled.
+    // Only lightContribution + colorContribution are scaled by uEmissionStrength.
     //
-    // uEmissionStrength scales the light contributions above 1.0 so
-    // UnrealBloomPass has a strong luminance signal above its threshold.
-    // The base material is never scaled — it must remain near-black.
-    //
-    // uEnableEmission is a float debug toggle:
-    //   1.0 → HDR path (Phase 6): light layers scaled by uEmissionStrength,
-    //         no clamp, OutputPass tone-maps the result.
-    //   0.0 → LDR path (Phase 5): light layers at face value, output clamped.
-    //
-    // mix() selects between the two paths without a branch instruction,
-    // which avoids GPU shader divergence on uniform conditionals.
-    //
-    // HDR path: baseMaterial + (lightContribution + colorContribution) * uEmissionStrength
-    // LDR path: clamp(baseMaterial + lightContribution + colorContribution, 0.0, 1.0)
+    // uEnableEmission float toggle:
+    //   1.0 → HDR path (Phase 6+): light scaled by uEmissionStrength, no clamp.
+    //   0.0 → LDR path (Phase 5):  light at face value, output clamped.
 
     vec3 lightSum  = lightContribution + colorContribution;
 
-    // HDR output — no clamp, emission multiplied. OutputPass applies tone mapping.
     vec3 hdrColor  = baseMaterial + lightSum * uEmissionStrength;
-
-    // LDR output — clamped, emission at face value. Matches Phase 5 exactly.
     vec3 ldrColor  = clamp(baseMaterial + lightSum, 0.0, 1.0);
 
-    // Blend between LDR and HDR paths using the debug toggle.
-    // uEnableEmission = 1.0 selects hdrColor; 0.0 selects ldrColor.
     vec3 finalColor = mix(ldrColor, hdrColor, uEnableEmission);
 
     gl_FragColor = vec4(finalColor, 1.0);

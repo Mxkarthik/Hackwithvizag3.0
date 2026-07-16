@@ -32,16 +32,16 @@ export default function createStrip() {
             value: 0.0
         },
         uLightWidth: {
-            value: 0.08          // σ of the horizontal Gaussian lobe
+            value: 0.05          // σ_U of the horizontal (long-axis) Gaussian lobe — tightened for anisotropic streak
         },
         uLightIntensity: {
-            value: 1.0           // peak brightness — animated in Phase 5
+            value: 1.0           // peak brightness of the white lobe
         },
         uColorIntensity: {
-            value: 0.6           // relative strength of the colored lobe vs. the white lobe
+            value: 0.45          // reduced from 0.6 — color is subliminal fringe, not dominant
         },
         uEmissionStrength: {
-            value: 1.5           // HDR multiplier for light layers — feeds UnrealBloomPass
+            value: 1.1           // reduced from 1.5 — less aggressive HDR for controlled bloom
         },
         uEnableEmission: {
             value: 1.0           // debug toggle: 1.0 = HDR path (Phase 6), 0.0 = LDR path (Phase 5)
