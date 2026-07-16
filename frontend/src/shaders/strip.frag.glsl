@@ -8,6 +8,8 @@ uniform float uLightPosition;   // Owned and animated by JavaScript — do NOT d
 uniform float uLightWidth;      // Standard deviation (σ) of the horizontal Gaussian lobe
 uniform float uLightIntensity;  // Peak brightness of the white lobe
 uniform float uColorIntensity;  // Relative strength of the colored lobe vs. the white lobe
+uniform float uEmissionStrength; // HDR multiplier for light layers — feeds UnrealBloomPass (Phase 6)
+uniform float uEnableEmission;  // Debug toggle: 1.0 = HDR emission on, 0.0 = Phase 5 LDR output
 uniform float uMetalStrength;
 uniform float uNoiseStrength;
 
@@ -119,8 +121,11 @@ void main() {
     // -----------------------------------------------------------------
     // We combine the base color, vertical depth, and metallic reflection,
     // and then apply the edge falloff.
-    vec3 blendedColor = baseColor + verticalDepth + metallicReflection;
-    vec3 finalColor = blendedColor * edgeFalloff;
+    // Stored as baseMaterial — the pre-light surface appearance.
+    // Kept separate from light contributions so Layer 9 can combine
+    // them with independent HDR scaling.
+    vec3 blendedColor  = baseColor + verticalDepth + metallicReflection;
+    vec3 baseMaterial  = blendedColor * edgeFalloff;
 
     // -----------------------------------------------------------------
     // LAYER 6: Procedural Surface Variation  (Phase 3 — data only)
@@ -147,8 +152,7 @@ void main() {
     //   B. Vertical Gaussian  — simulates light wrapping over strip curvature.
     //   C. Roughness modulation — surfaceVariation attenuates the lobe
     //      where micro-facets scatter the light (high roughness = lower peak).
-    //   D. Additive composite — light is added on top of finalColor so it
-    //      is not double-attenuated by the edge falloff applied in Layer 5.
+    //   D. lightContribution stored independently for Layer 9 composition.
 
     // Named constants — no magic numbers.
     // σ for the horizontal lobe is uLightWidth (tunable uniform).
@@ -175,16 +179,9 @@ void main() {
     //    incoming light, reducing the apparent specular peak at that point.
     float roughnessMod = 1.0 - surfaceVariation * ROUGHNESS_MODULATION;
 
-    // D. Composite light contribution
-    //    uLightIntensity controls peak brightness — kept as a uniform so
-    //    Phase 5 can animate it (fade in/out, pulse, etc.) from JavaScript.
-    //    Light color is vec3(1.0) (white) — the white energy source.
-    //    The colored fringe is added in Layer 8.
-    float lightMask         = hGaussian * vGaussian * roughnessMod;
-    vec3  lightContribution = vec3(lightMask) * uLightIntensity;
-
-    // Add the white light on top of the fully composited base material.
-    finalColor += lightContribution;
+    // D. White light contribution — stored independently for Layer 9.
+    float lightMask          = hGaussian * vGaussian * roughnessMod;
+    vec3  lightContribution  = vec3(lightMask) * uLightIntensity;
 
     // -----------------------------------------------------------------
     // LAYER 8: Colored Illumination  (Phase 5)
@@ -199,8 +196,7 @@ void main() {
     // Shares uLightPosition, vGaussian, roughnessMod, and hDist with
     // Layer 7 — no redundant calculations.
     //
-    // COLOR_SPREAD_FACTOR defines how much wider the colored lobe is
-    // relative to the white lobe (σ_color = uLightWidth × COLOR_SPREAD_FACTOR).
+    // colorContribution stored independently for Layer 9 composition.
 
     const float COLOR_SPREAD_FACTOR = 2.5;  // colored lobe is 2.5× wider than white
 
@@ -210,14 +206,41 @@ void main() {
     float hGaussianColor = exp(-(hDist * hDist) / hVarianceColor);
 
     // Reuse vGaussian and roughnessMod from Layer 7 — same physics apply.
-    float colorMask         = hGaussianColor * vGaussian * roughnessMod;
-    vec3  colorContribution = uLightColor * colorMask * uColorIntensity;
+    float colorMask          = hGaussianColor * vGaussian * roughnessMod;
+    vec3  colorContribution  = uLightColor * colorMask * uColorIntensity;
 
-    // Additive composite — color adds energy on top of the white lobe.
-    // At the peak both lobes sum toward white (clamped).
-    // Away from the peak the white has decayed and the brand color dominates.
-    finalColor += colorContribution;
+    // -----------------------------------------------------------------
+    // LAYER 9: HDR Emission & Composition  (Phase 6)
+    // -----------------------------------------------------------------
+    // Combines baseMaterial, lightContribution, and colorContribution
+    // with independent HDR scaling on the light layers only.
+    //
+    // uEmissionStrength scales the light contributions above 1.0 so
+    // UnrealBloomPass has a strong luminance signal above its threshold.
+    // The base material is never scaled — it must remain near-black.
+    //
+    // uEnableEmission is a float debug toggle:
+    //   1.0 → HDR path (Phase 6): light layers scaled by uEmissionStrength,
+    //         no clamp, OutputPass tone-maps the result.
+    //   0.0 → LDR path (Phase 5): light layers at face value, output clamped.
+    //
+    // mix() selects between the two paths without a branch instruction,
+    // which avoids GPU shader divergence on uniform conditionals.
+    //
+    // HDR path: baseMaterial + (lightContribution + colorContribution) * uEmissionStrength
+    // LDR path: clamp(baseMaterial + lightContribution + colorContribution, 0.0, 1.0)
 
-    // Clamp the final color to prevent any clipping/harsh highlights and keep it premium.
-    gl_FragColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);
+    vec3 lightSum  = lightContribution + colorContribution;
+
+    // HDR output — no clamp, emission multiplied. OutputPass applies tone mapping.
+    vec3 hdrColor  = baseMaterial + lightSum * uEmissionStrength;
+
+    // LDR output — clamped, emission at face value. Matches Phase 5 exactly.
+    vec3 ldrColor  = clamp(baseMaterial + lightSum, 0.0, 1.0);
+
+    // Blend between LDR and HDR paths using the debug toggle.
+    // uEnableEmission = 1.0 selects hdrColor; 0.0 selects ldrColor.
+    vec3 finalColor = mix(ldrColor, hdrColor, uEnableEmission);
+
+    gl_FragColor = vec4(finalColor, 1.0);
 }

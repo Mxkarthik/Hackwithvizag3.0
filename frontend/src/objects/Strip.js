@@ -40,6 +40,12 @@ export default function createStrip() {
         uColorIntensity: {
             value: 0.6           // relative strength of the colored lobe vs. the white lobe
         },
+        uEmissionStrength: {
+            value: 1.5           // HDR multiplier for light layers — feeds UnrealBloomPass
+        },
+        uEnableEmission: {
+            value: 1.0           // debug toggle: 1.0 = HDR path (Phase 6), 0.0 = LDR path (Phase 5)
+        },
         uMetalStrength: {
             value: 1.0
         },
