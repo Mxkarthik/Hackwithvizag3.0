@@ -222,7 +222,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-0',
             position:         { x:  1.71, y:  2.85, z: -0.08 },
-            scale:            { x:  2.20, y:  1.00 },
+            scale:            { x:  2.50, y:  1.05 },
             rotation:         ROT,
             phaseOffset:      0 * SIXTH,
             sweepSpeed:       BASE_SPEED * 0.982,
@@ -238,7 +238,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-1',
             position:         { x:  0.93, y:  1.62, z: -0.02 },
-            scale:            { x:  2.45, y:  1.08 },
+            scale:            { x:  2.50, y:  1.05 },
             rotation:         ROT,
             phaseOffset:      1 * SIXTH,
             sweepSpeed:       BASE_SPEED * 1.018,
@@ -255,7 +255,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-2',
             position:         { x:  0.03, y:  0.52, z:  0.10 },
-            scale:            { x:  2.70, y:  1.16 },
+            scale:            { x:  2.50, y:  1.05 },
             rotation:         ROT,
             phaseOffset:      2 * SIXTH,
             sweepSpeed:       BASE_SPEED * 1.000,
@@ -271,7 +271,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-3',
             position:         { x: -0.88, y: -0.64, z:  0.04 },
-            scale:            { x:  2.40, y:  1.06 },
+            scale:            { x:  2.50, y:  1.05 },
             rotation:         ROT,
             phaseOffset:      3 * SIXTH,
             sweepSpeed:       BASE_SPEED * 0.975,
@@ -287,7 +287,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-4',
             position:         { x: -1.66, y: -1.73, z: -0.06 },
-            scale:            { x:  2.10, y:  0.99 },
+            scale:            { x:  2.50, y:  1.05 },
             rotation:         ROT,
             phaseOffset:      4 * SIXTH,
             sweepSpeed:       BASE_SPEED * 1.024,
@@ -304,7 +304,7 @@ export function buildHeroComposition() {
         {
             id:               'panel-slab-5',
             position:         { x: -2.43, y: -2.68, z: -0.14 },
-            scale:            { x:  1.80, y:  0.94 },
+            scale:            { x:  2.50, y:  1.05 },
             rotation:         ROT,
             phaseOffset:      5 * SIXTH,
             sweepSpeed:       BASE_SPEED * 0.978,
