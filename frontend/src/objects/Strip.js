@@ -30,7 +30,7 @@ const DEFAULTS = {
     scale:            { x: 1.0, y: 1.0 },   // multiplied onto base geometry (4×1)
     rotation:         Math.PI / 4,
     phaseOffset:      0.0,     // seconds — shifts sweep start time
-    sweepSpeed:       0.10,    // cycles / second
+    sweepSpeed:       0.045,   // cycles / second
     sweepMin:        -0.2,     // UV X entry (slightly past left edge)
     sweepMax:         1.2,     // UV X exit  (slightly past right edge)
     emissionStrength: 1.1,
@@ -74,7 +74,7 @@ export function createStrip(config = {}) {
     const uniforms = {
         uTime:             { value: 0 },
         uBaseColor:        { value: new THREE.Color(0.0, 0.0, 0.0) },
-        uLightColor:       { value: new THREE.Color("#D6B7C4") },
+        uLightColor:       { value: new THREE.Color("#EC044F") },
         uLightPosition:    { value: cfg.sweepMin },
         uLightWidth:       { value: 0.05 },
         uLightIntensity:   { value: cfg.lightIntensity },
@@ -209,9 +209,9 @@ export function buildStripSystem() {
 //   slab-5  Y:[−5.51, +0.15]  crops BOT  −1.78u  — lower exit band
 // =============================================================================
 export function buildHeroComposition() {
-    const BASE_SPEED = 0.10;
-    const CYCLE      = 1.0 / BASE_SPEED;   // 10 s
-    const SIXTH      = CYCLE / 6;           // ≈ 0.93 s — one sixth of cycle
+    const BASE_SPEED = 0.045;
+    const CYCLE      = 1.0 / BASE_SPEED;   // ≈ 22.2 s
+    const SIXTH      = CYCLE / 6;           // ≈ 3.70 s — one sixth of cycle
 
     const ROT = -Math.PI / 4;   // -45° — strips lean \\
 
