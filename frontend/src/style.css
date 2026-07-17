@@ -13,6 +13,8 @@ body{
     overflow:hidden;
 
     background:#050505;
+
+    font-family:"Inter", system-ui, -apple-system, sans-serif;
 }
 
 canvas{
@@ -22,3 +24,4 @@ canvas{
     width:100%;
     height:100%;
 }
+

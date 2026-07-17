@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 52" fill="none" role="img" aria-label="TCONGS INFOTECH">
+  <g transform="translate(0 1)">
+    <path fill="#2268A8" d="M0 0h48v9H10v31h38v9H0V0z"/>
+    <rect fill="#9A9A9A" x="34" y="0" width="14" height="14"/>
+    <path fill="#C9186E" d="M10 24 28 14v20L10 24z"/>
+    <path fill="#F0A050" d="M10 14 22 8v12L10 14z"/>
+    <path fill="#9DC83B" d="M10 6 18 2v8L10 6z"/>
+  </g>
+  <text x="58" y="28" fill="#2268A8" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" letter-spacing="-0.5">TCONGS</text>
+  <text x="58" y="46" fill="#E89860" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="400" letter-spacing="3.2">INFOTECH</text>
+</svg>
